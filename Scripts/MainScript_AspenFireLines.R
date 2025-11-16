@@ -1,4 +1,4 @@
-#### Begin - Loading Dependencies, Set WorkingDirector ####
+#### Begin - Loading Dependencies, Set Working Directory ####
 library(terra) ## needed for all spatial analysis
 setwd("D:/Aspen Firelines/data") ## set working directory to the data folder
 
@@ -235,15 +235,29 @@ gc()
 #### Loading Environmental Data ####
 SR <- vect("./Boundary/SouthernRockyBoundary_10kmBuff.shp") ## loading in the study area boundary, may or may not need to re:load based on where in script you are starting
 
+## Landcover
 temp <- list.files(path = "./Predictor Rasters/Land Cover/",pattern="*.tif") ## creating a vector that has all the files in the working directory with .tif extensions
 for(i in 1:length(temp)) {
   path <- paste("./Predictor Rasters/Land Cover/", temp[i], sep = "") ## specifying the relative pathway for assign
   assign(temp[i], terra::rast(path)) ## assigning the rasters
-} ## loading in the rsaters I want
+} ## loading in the raters I want
 
-crs(DouglasFir_Binary.tif)
+## Topographic
+temp <- list.files(path = "./Predictor Rasters/Topographic/",pattern="*.tif") ## creating a vector that has all the files in the working directory with .tif extensions
+for(i in 1:length(temp)) {
+  path <- paste("./Predictor Rasters/Topographic/", temp[i], sep = "") ## specifying the relative pathway for assign
+  assign(temp[i], terra::rast(path)) ## assigning the rasters
+} ## loading in the raters I want
 
-
+## Climate
+VPd_2022_04
+Aspen_Binary.tif
+test <- project(VPd_2022_04, crs(SR))
+test <- crop(test, SR)
+ext(test) <- ext(SR);gc()
+test
+Aspen_Binary.tif
+stack <- c(test, Aspen_Binary.tif)
 #### Extracting Environmental Variables for Fire Lines ####
 
 
