@@ -11,7 +11,7 @@ library(pROC) ## needed for AUC
 setwd("D:/Aspen Firelines/data") ## set working directory to the data folder
 
 
-#### Loading in the Fire Lines Data ####
+#### Processing Fire Lines Data from NIFC (2019-2023) ####
 temp <- list.files(path = "./NIFC Lines/",pattern="*.shp") ## creating a vector that has all the files in the working directory with .shp extensions
 temp <- temp[1:5] ## setting 1:5 as script will write a compiled .shp file (stored in archived data)
 
@@ -63,7 +63,7 @@ gc()
 writeVector(SR_FLs, "./NIFC Lines/SR_FLs.shp", overwrite = TRUE) ## writing the shapefile so I can call it later
 rm(SR_FLs)
 
-#### Loading Fire Polygon Data from NIFC (2019-2023) ####
+#### Processing Fire Polygon Data from NIFC (2019-2023) ####
 temp <- list.files(path = "./NIFC Polygons/",pattern="*.shp") ## creating a vector that has all the files in the working directory with .shp extensions
 temp <- temp[1:5] ## setting 1:5 as script will write a compiled .shp file (stored in archived data)
 
@@ -240,7 +240,7 @@ writeVector(SR_Fires,"./NIFC Polygons/SR_Fires.shp", overwrite = TRUE)
 rm(SR_Fires);rm(vec);rm(i);rm(n_vertices);rm(path);rm(temp);rm(count_vertices)
 gc()
 
-#### Loading Processed Spatial Data ####
+#### Loading Processed Spatial Data for Extraction ####
 SR <- vect("./Boundary/SouthernRockyBoundary_10kmBuff.shp") ## loading in the study area boundary, may or may not need to re:load based on where in script you are starting
 SR_Fires <- vect("./NIFC Polygons/SR_Fires.shp")
 SR_FLs <- vect("./NIFC Lines/SR_FLs.shp")
@@ -289,6 +289,7 @@ Engaged_Lines_list <- vector("list", length(vec) * 2)
 Fires_filtered <- SR_Fires[SR_Fires$year %in% vec, ]
 FLs_filtered <- SR_FLs[SR_FLs$year %in% vec, ]
 
+## for loop to extract data for fire lines (by year)
 for(i in seq_along(vec)){
 year_i <- vec[i]
 
@@ -357,10 +358,16 @@ print(year_i)
 gc()
 }
 
+## cleaning the extracted data a bit
 Engaged_Lines <- do.call(rbind, Engaged_Lines_list);gc()
-table(Engaged_Lines$year) ## woah, way more data here
-table(Engaged_Lines$Stat) ## also here
-length(unique(Engaged_Lines$IncidentNa.1)) ## more fires too
+table(Engaged_Lines$year)
+# 2019 2020 2021 2022 2023 
+#  236 1994  228 2998  517 
+table(Engaged_Lines$Stat)
+# EF   EH 
+# 1886 4087 
+length(unique(Engaged_Lines$IncidentNa.1))
+# 56
 table(Engaged_Lines$IncidentNa.1) ## a few errors in the fire names
 
 ## correcting a few names
@@ -371,25 +378,50 @@ Engaged_Lines$IncidentNa.1[Engaged_Lines$IncidentNa.1 == "mullenfire"] <- "mulle
 length(unique(Engaged_Lines$IncidentNa.1)) ## 52 total fires
 
 perim_check <- data.frame(name = SR_Fires$IncidentNa,
-                          perimeter = perim(SR_Fires))
+                          perimeter = perim(SR_Fires)) ## making a df to check line lengths (perim_m)
 perim_check$name[perim_check$name == "calfcanyon"] <- "hermitspeak"
 perim_check$name[perim_check$name == "middleforkfire"] <- "middlefork"
 perim_check$name[perim_check$name == "nidnight"] <- "midnight"
 perim_check$name[perim_check$name == "mullenfire"] <- "mullen"
 
 perim_check <- perim_check[order(perim_check$name),]
-perim_check <- perim_check[!duplicated(perim_check$name),] ## removing duplicated (lower area)
+perim_check <- perim_check[!duplicated(perim_check$name),] ## removing duplicated (lower area observations of same fire)
 
 table(Engaged_Lines$perim_EH >= perim_check$perimeter[match(Engaged_Lines$IncidentNa.1, perim_check$name)])
 ## this table is telling me there are 4 observations where the line perimeter >= fire perimeter
 
-Engaged_Lines$DeleteThis <- Engaged_Lines$perim_EH >= perim_check$perimeter[match(Engaged_Lines$IncidentNa.1, perim_check$name)]
+## looking at other observations
+plot(Engaged_Lines$perim_EH)
+abline(h = mean(Engaged_Lines$perim_EH) + 3.291*(sd(Engaged_Lines$perim_EH)/(sqrt(length(Engaged_Lines$perim_E))))) ## adding line above the 99.9% confidence intervals (3.291 == t value for CI)
+## there are many that are above the 99.9% confidence interval
+table(Engaged_Lines$perim_EH > mean(Engaged_Lines$perim_EH) + 3.291*(sd(Engaged_Lines$perim_EH)/(sqrt(length(Engaged_Lines$perim_E))))) ## table of observations above, clearly outliers
+## 586 above CI
+Engaged_Lines$DeleteThis <- Engaged_Lines$perim_EH > mean(Engaged_Lines$perim_EH) + 3.291*(sd(Engaged_Lines$perim_EH)/(sqrt(length(Engaged_Lines$perim_E)))) ## moving extreme values to "DELETETHIS" columns
+table(Engaged_Lines$DeleteThis) ## checking that this matches other table
 Engaged_Lines <- Engaged_Lines[Engaged_Lines$DeleteThis == FALSE,] ## only keeping FALSE values
 
-Engaged_Lines$DeleteThis <- Engaged_Lines$perim_EH >= (perim_check$perimeter[match(Engaged_Lines$IncidentNa.1, perim_check$name)]*.8)
-table(Engaged_Lines$DeleteThis) ## removing 4 more values that the line is 0.80 the sie of the fire perimeter
-Engaged_Lines <- Engaged_Lines[Engaged_Lines$DeleteThis == FALSE,] ## only keeping FALSE values
+plot(Engaged_Lines$perim_EH) ## this looks more reasonable
 
+## creating a SpatVector that matches the observations of Engaged_Lines
+SR_midpoints <- centroids(SR_FLs)
+SR_coords <- crds(SR_midpoints)
+
+## Create matching keys
+SR_key <- paste(round(SR_coords[,1], 5), round(SR_coords[,2], 5), sep = "_")
+Engaged_key <- paste(round(Engaged_Lines$x, 5), 
+                     round(Engaged_Lines$y, 5), sep = "_")
+stat_lookup <- setNames(Engaged_Lines$Stat, Engaged_key) ## creating a status vector to add to FLs SpatVector
+
+## Subset using %in% 
+SR_FLs_trimmed <- SR_FLs[SR_key %in% Engaged_key, ]
+
+## Add the column using the matching keys
+SR_FLs_trimmed$stat <- stat_lookup[SR_key[SR_key %in% Engaged_key]]
+
+## saving cleaned fire lines for mapping in ArcPRO
+writeVector(SR_FLs_trimmed, "./Results/LinesForMapping.shp")
+
+## formating the create date for matching with VPD, wind, and growth
 str(Engaged_Lines$CreateDate)
 Engaged_Lines$CreateDate <- as.Date(Engaged_Lines$CreateDate)
 plot(Engaged_Lines$CreateDate)
@@ -397,6 +429,7 @@ max(Engaged_Lines$CreateDate, na.rm = TRUE)
 table(is.na(Engaged_Lines$CreateDate))
 Engaged_Lines <- Engaged_Lines[complete.cases(Engaged_Lines$CreateDate),] ## removing the data we have no date for
 
+## which columns to keep 
 colnames(Engaged_Lines)
 ## Stat - 102
 ## IncidentNa.1 - 39
@@ -537,7 +570,7 @@ for(i in 1:ncol(dist.mat)){
   closest.stations[i] <- rownames(dist.mat)[!is.na(match(dist.mat[,i],dists))]
 } ## identifying the station with the smallest distance to each sampled fire lines point
 
-length(unique(closest.stations))  ## 43 stations were used (out of the 101 available)
+length(unique(closest.stations))  ## 41 stations were used (out of the 101 available)
 table(is.na(closest.stations)) ## no NA values
 Engaged_Lines$Station <- closest.stations ## Assigning each point its closest station that has wind data
 
@@ -565,8 +598,8 @@ for(i in 1:nrow(Engaged_Lines)){
 table(is.na(Engaged_Lines$avgWind_mph)) ## 29 needed to be skipped over
 table(is.na(Engaged_Lines$gustWind_mph)) ## 29 skipped for this variable too
 
-table(Engaged_Lines$avgWind_mph == -9999 | is.na(Engaged_Lines$avgWind_mph)) ## 5133 observations with usable data for average wind speeds (using the 1 km point density for fire line sampling points)
-table(Engaged_Lines$gustWind_mph == -9999 | is.na(Engaged_Lines$gustWind_mph)) ## 4898 observation with usable data for gust speeds (using the 1 km point density for fire line sampling points)
+table(Engaged_Lines$avgWind_mph == -9999 | is.na(Engaged_Lines$avgWind_mph)) ## 4657 observations with usable data for average wind speeds (using the 1 km point density for fire line sampling points)
+table(Engaged_Lines$gustWind_mph == -9999 | is.na(Engaged_Lines$gustWind_mph)) ## 4426 observation with usable data for gust speeds (using the 1 km point density for fire line sampling points)
 
 Engaged_Lines$avgWind_mph[Engaged_Lines$avgWind_mph == -9999] <- NA ## setting -9999 values back to NA for the upcoming modelling
 Engaged_Lines$gustWind_mph[Engaged_Lines$gustWind_mph == -9999] <- NA ## setting -9999 values back to NA for the upcoming modelling
@@ -688,6 +721,10 @@ f2$area[f2$fmatch == "highpark2022"][2] <- mean(f2$area[f2$fmatch == "highpark20
 ## lefthand 
 f2$area[f2$fmatch == "lefthand2020"][2] <- mean(f2$area[f2$fmatch == "lefthand2020"][c(1,3)])
 
+## little mesa
+f2$area[f2$fmatch == "littlemesa2023"][3] <- mean(f2$area[f2$fmatch == "littlemesa2023"][c(2,4)])
+f2$area[f2$fmatch == "littlemesa2023"][5] <- mean(f2$area[f2$fmatch == "littlemesa2023"][c(4,6)])
+
 ## lowline
 f2$area[f2$fmatch == "lowline2023"][1] <- mean(c(f2$area[f2$fmatch == "lowline2023"][2],1))
 f2$area[f2$fmatch == "lowline2023"][11] <- mean(f2$area[f2$fmatch == "lowline2023"][c(10,12)])
@@ -695,6 +732,7 @@ f2$area[f2$fmatch == "lowline2023"][c(16:18)] <- f2$area[f2$fmatch == "lowline20
 
 # ## luna
 f2$area[f2$fmatch == "luna2020"][2] <- mean(f2$area[f2$fmatch == "luna2020"][c(1,3)])
+f2$area[f2$fmatch == "luna2020"][4] <- mean(f2$area[f2$fmatch == "luna2020"][c(3,5)])
 
 ## middle fork
 f2$area[f2$fmatch == "middlefork2020"][34] <- mean(f2$area[f2$fmatch == "middlefork2020"][c(33,35)])
@@ -717,9 +755,6 @@ f2$area[f2$fmatch == "morgancreek2021"][6] <- mean(f2$area[f2$fmatch == "morganc
 f2$area[f2$fmatch == "morgancreek2021"][11] <- mean(f2$area[f2$fmatch == "morgancreek2021"][c(10,12)])
 f2$area[f2$fmatch == "morgancreek2021"][41] <- f2$area[f2$fmatch == "morgancreek2021"][40]
 
-## muddy slide
-f2$area[f2$fmatch == "muddyslide2021"][c(24,39)] <- f2$area[f2$fmatch == "muddyslide2021"][40]
-
 ## mullen
 f2$area[f2$fmatch == "mullen2020"][8] <- mean(f2$area[f2$fmatch == "mullen2020"][c(7,9)])
 f2$area[f2$fmatch == "mullen2020"][44:45] <- f2$area[f2$fmatch == "mullen2020"][46]
@@ -739,6 +774,7 @@ f2$area[f2$fmatch == "reveille2019"][33] <- mean(f2$area[f2$fmatch == "reveille2
 f2$area[f2$fmatch == "reveille2019"][c(46,47)] <- f2$area[f2$fmatch == "reveille2019"][48]
 
 ## simms
+f2$area[f2$fmatch == "simms2022"][1] <- f2$area[f2$fmatch == "simms2022"][2] 
 f2$area[f2$fmatch == "simms2022"][5] <- mean(f2$area[f2$fmatch == "simms2022"][c(4,6)])
 
 ## spring creek
@@ -792,14 +828,17 @@ for(i in 1:length(vec)){
   Engaged_Lines$Growth[Engaged_Lines$fmatch == vec[i]] <- tmp2$growth[(match(tmp$mdate, tmp2$date))]
 } ## this code will work with additional fire years with additional ICS-209 forms. For now there are a lot of NA values
 hist(Engaged_Lines$Growth) ## there are some extreme events but mostly moderate growth
-table(is.na(Engaged_Lines$Growth)) ## 146 observations have no growth data
+table(is.na(Engaged_Lines$Growth)) ## 134 observations have no growth data
 table(Engaged_Lines$fire[is.na(Engaged_Lines$Growth)]) ## split across a few fires
 
 FireData <- Engaged_Lines[complete.cases(Engaged_Lines),]
-table(FireData$stat) ## Sample Size of 4755
-## 1552 failed
-## 3203 held
-length(unique(FireData$fire)) ## 37 total fires
+table(FireData$stat) ## Sample Size of 4295
+## 1482 failed
+## 2813 held
+table(FireData$stat)/nrow(FireData)*100 ## a little unbalanced
+# EF       EH 
+# 34.50524 65.49476
+length(unique(FireData$fire)) ## 36 total fires
 
 FireData$Jdate <- format(strptime(FireData$mdate, format = "%Y%m%d"), "%j")
 FireData$Jdate <- as.integer(FireData$Jdate)
@@ -815,13 +854,13 @@ write.csv(FireData, "./Results/CleanedFireLines.csv")
 rm(list = ls()) # cleans entire global environment
 gc()
 
-#### Visualizing Fire Lines Data ####
+#### Visualizing Cleaned Fire Lines Data ####
 ## summary of data
 FireData <- read.csv("./Results/CleanedFireLines.csv")
   
 table(FireData$stat)
 (table(FireData$stat)/nrow(FireData))*100
-## 30/70 split
+## 35/65 split
 length(unique(FireData$fire))
 
 summaryTable <- data.frame(fire = unique(FireData$fire),
@@ -844,6 +883,7 @@ summaryTable$area_ha <- SR_Fires$GISAcres[match(summaryTable$fire, SR_Fires$Inci
 summaryTable$area_ha <- summaryTable$area_ha/2.471 ## acres to ha
 summaryTable$area_ha <- round(summaryTable$area_ha,0) ## rounding
 hist(summaryTable$area_ha) ## one obvious error
+max(summaryTable$area_ha) ## 700k ha is not the correct size
 summaryTable$fire[which(summaryTable$area_ha == max(summaryTable$area_ha))] ## cameronpeak is incorrect
 ## fire size was actually 84544 ha
 summaryTable$area_ha[summaryTable$fire == "cameronpeak"] <- 84544
@@ -903,7 +943,7 @@ barplot(t(fl.mat), beside = T,
         xlab = "year",
         ylab = "number of lines",
         col = c("darkgoldenrod","navy"))
-legend("topright",legend = c("Failed Lines", "Held Lines"), pch = 15, col = c("navy", "darkgoldenrod"), bty = "n")
+legend("topright",legend = c("Failed Lines", "Held Lines"), pch = 15, col = c("darkgoldenrod","navy"), bty = "n")
 text(x = c(1.5,4.5,7.5,10.4,13.5,2.5,5.5,8.5,11.5,14.5),
      y = (as.vector(fl.mat) + 100),
      cex = 1,
@@ -915,8 +955,13 @@ rm(fl.mat);rm(SR_Fires);rm(summaryTable);rm(tots);rm(i);rm(vec)
 colnames(FireData)
 preds <- as.matrix(FireData[,c(9:23,26:28)])
 M <- cor(preds, method = c("spearman"))
-M
-rm(preds);rm(M)
+correlated <- as.numeric(M[which(M > 0.75)])
+correlated <- correlated[correlated != 1] 
+which(M == correlated, arr.ind = TRUE)
+## wind is correlated with wind
+M[which(M < -0.75)]
+
+rm(preds);rm(M);rm(correlated)
 
 ## Checking for Collinearity
 ## Custum function from Zuur for collineariy
@@ -978,7 +1023,13 @@ myvif <- function(mod) {
 }
 #END VIF FUNCTIONS
 
-colnames(FireData)
+colnames(FireData) ## colnames of interst - I am grabbing the number instead
+# "fire"           "year"           "lineconstr"     "perim_m"       
+# "elev"           "slope"          "tpi"            "aspen_prop"    
+# "dougfir_prop"   "gambel_prop"    "grass_prop"     "lodgepole_prop"
+# "other_prop"     "pj_prop"        "pondo_prop"     "sf_prop"       
+# "shrub_prop"     "VPd"            "avgWind_mph"    "gustWind_mph"  
+# "Growth"
 MyVar <- colnames(FireData)[c(3,4,8:23,26:28)]
 MyVar
 corvif(FireData[,MyVar]) ## FireName explains a lot of the variation, this makes makes since given the heirarchical nature of the data
@@ -1030,217 +1081,6 @@ rm(m1);rm(m2);rm(pseudo.R.squared)
 rm(FDmod)
 ## thus concludes the limited attempt to construct linear models
 
-#### Nonparametric Models ####
-SR <- vect("./Boundary/SouthernRockyBoundary_10kmBuff.shp") ## loading in the study area boundary, may or may not need to re:load based on where in script you are starting
-SR_Fires <- vect("./NIFC Polygons/SR_Fires.shp")
-SR_FLs <- vect("./NIFC Lines/SR_FLs.shp")
-Fires_add60 <- buffer(SR_Fires, 60)
-FLs_Engaged <- terra::intersect(SR_FLs, Fires_add60)
-
-## pulling in the landcover rasters again to count the number of pixels
-temp <- list.files(path = "./Predictor Rasters/Land Cover/",pattern="*.tif") ## creating a vector that has all the files in the working directory with .tif extensions
-for(i in 1:length(temp)) {
-  path <- paste("./Predictor Rasters/Land Cover/", temp[i], sep = "") ## specifying the relative pathway for assign
-  assign(temp[i], terra::rast(path)) ## assigning the rasters
-} ## loading in the raters I want
-
-sr_masked <- mask(Aspen_Binary.tif, SR) ## masking the layer to the SR
-tots <- as.integer(freq(sr_masked, value = 1)[3]) ## recording the number of cells == 1
-fires <- mask(sr_masked, SR_Fires) ## masking furhter to the burned areas
-burns <- as.integer(freq(fires, value = 1)[3]) ## recording the number of cells == 1
-FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE) ## final mask to the fire lines
-Fls <- as.integer(freq(FLs, value = 1)[3]) ## recording these cells
-gc()
-
-## repeating, but making sure that further additions are binded to original outputs
-## dougfir
-sr_masked <- mask(DougFir_Binary.tif, SR)
-tots.added <- as.integer(freq(sr_masked, value = 1)[3])
-tots <- c(tots, tots.added)
-fires <- mask(sr_masked, SR_Fires)
-burns.added <- as.integer(freq(fires, value = 1)[3])
-burns <- c(burns, burns.added)
-FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
-Fls.added <- as.integer(freq(FLs, value = 1)[3]) 
-Fls <- c(Fls, Fls.added)
-gc()
-
-## gambel
-sr_masked <- mask(Gambel_Binary.tif, SR)
-tots.added <- as.integer(freq(sr_masked, value = 1)[3])
-tots <- c(tots, tots.added)
-fires <- mask(sr_masked, SR_Fires)
-burns.added <- as.integer(freq(fires, value = 1)[3])
-burns <- c(burns, burns.added)
-FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
-Fls.added <- as.integer(freq(FLs, value = 1)[3])
-Fls <- c(Fls, Fls.added)
-gc()
-
-## grass
-sr_masked <- mask(Grass_Binary.tif, SR)
-tots.added <- as.integer(freq(sr_masked, value = 1)[3])
-tots <- c(tots, tots.added)
-fires <- mask(sr_masked, SR_Fires)
-burns.added <- as.integer(freq(fires, value = 1)[3])
-burns <- c(burns, burns.added)
-FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
-Fls.added <- as.integer(freq(FLs, value = 1)[3])
-Fls <- c(Fls, Fls.added)
-gc()
-
-## lodgepole
-sr_masked <- mask(Lodgepole_Binary.tif, SR)
-tots.added <- as.integer(freq(sr_masked, value = 1)[3])
-tots <- c(tots, tots.added)
-fires <- mask(sr_masked, SR_Fires)
-burns.added <- as.integer(freq(fires, value = 1)[3])
-burns <- c(burns, burns.added)
-FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
-Fls.added <- as.integer(freq(FLs, value = 1)[3])
-Fls <- c(Fls, Fls.added)
-gc()
-
-## other
-sr_masked <- mask(Other_Binary.tif, SR)
-tots.added <- as.integer(freq(sr_masked, value = 1)[3])
-tots <- c(tots, tots.added)
-fires <- mask(sr_masked, SR_Fires)
-burns.added <- as.integer(freq(fires, value = 1)[3])
-burns <- c(burns, burns.added)
-FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
-Fls.added <- as.integer(freq(FLs, value = 1)[3])
-Fls <- c(Fls, Fls.added)
-gc()
-
-## PJ
-sr_masked <- mask(PJ_Binary.tif, SR)
-tots.added <- as.integer(freq(sr_masked, value = 1)[3])
-tots <- c(tots, tots.added)
-fires <- mask(sr_masked, SR_Fires)
-burns.added <- as.integer(freq(fires, value = 1)[3])
-burns <- c(burns, burns.added)
-FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
-Fls.added <- as.integer(freq(FLs, value = 1)[3])
-Fls <- c(Fls, Fls.added)
-gc()
-
-## ponderosa
-sr_masked <- mask(Ponderosa_Binary.tif, SR)
-tots.added <- as.integer(freq(sr_masked, value = 1)[3])
-tots <- c(tots, tots.added)
-fires <- mask(sr_masked, SR_Fires)
-burns.added <- as.integer(freq(fires, value = 1)[3])
-burns <- c(burns, burns.added)
-FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
-Fls.added <- as.integer(freq(FLs, value = 1)[3]) 
-Fls <- c(Fls, Fls.added)
-gc()
-
-## SF
-sr_masked <- mask(SF_Binary.tif, SR)
-tots.added <- as.integer(freq(sr_masked, value = 1)[3])
-tots <- c(tots, tots.added)
-fires <- mask(sr_masked, SR_Fires)
-burns.added <- as.integer(freq(fires, value = 1)[3])
-burns <- c(burns, burns.added)
-FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
-Fls.added <- as.integer(freq(FLs, value = 1)[3])
-Fls <- c(Fls, Fls.added)
-gc()
-
-## shrub
-sr_masked <- mask(Shrub_Binary.tif, SR)
-tots.added <- as.integer(freq(sr_masked, value = 1)[3])
-tots <- c(tots, tots.added)
-fires <- mask(sr_masked, SR_Fires)
-burns.added <- as.integer(freq(fires, value = 1)[3])
-burns <- c(burns, burns.added)
-FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
-Fls.added <- as.integer(freq(FLs, value = 1)[3]) 
-Fls <- c(Fls, Fls.added)
-gc()
-
-
-ID <- tolower(gsub("_Binary.tif", x = temp, ""))
-cellcounts <- data.frame(name = ID,
-                         tot = tots,
-                         burn = burns,
-                         Fls = Fls)
-write.csv(cellcounts, "./Results/cellcounts.csv")
-rm(list = temp)
-
-## statistical analysis
-cellcounts <- read.csv("./Results/cellcounts.csv")
-
-## burned vs landscape
-burned <- cellcounts$burn
-unburned <- cellcounts$tot - cellcounts$burn
-BurnedMat <- matrix(c(burned, unburned), nrow = 10)
-colnames(BurnedMat) <- c("burned", "unburned")
-rownames(BurnedMat) <- cellcounts$name
-chisq.test(BurnedMat) ## difference in representation in burns
-
-Burned.Res <- data.frame(name = cellcounts$name[-1],
-                         est = NA,
-                         lwr = NA,
-                         upr = NA)
-for(i in 2:nrow(BurnedMat)){
-  mod <- fisher.test(BurnedMat[c(i,1),])
-  Burned.Res$est[i-1] <- mod$estimate
-  Burned.Res$lwr[i-1] <- mod$conf.int[1]
-  Burned.Res$upr[i-1] <- mod$conf.int[2]
-}
-
-## fire lines vs burned
-firelines <- cellcounts$Fls
-nolines <- cellcounts$burn - cellcounts$Fls
-LinesMat <- matrix(c(firelines, nolines), nrow = 10)
-colnames(LinesMat) <- c("lines", "nolines")
-rownames(LinesMat) <- cellcounts$name
-chisq.test(LinesMat) ## difference in representation in burns
-
-Lines.Res <- data.frame(name = cellcounts$name[-1],
-                         est = NA,
-                         lwr = NA,
-                         upr = NA)
-for(i in 2:nrow(LinesMat)){
-  mod <- fisher.test(LinesMat[c(i,1),])
-  Lines.Res$est[i-1] <- mod$estimate
-  Lines.Res$lwr[i-1] <- mod$conf.int[1]
-  Lines.Res$upr[i-1] <- mod$conf.int[2]
-}
-
-## Plotting Non Parametric Models
-par(mfrow = c(1,1),oma = c(0,2.5,0,0))
-
-max(Burned.Res$upr);max(Lines.Res$upr)
-
-plot(x = Burned.Res$est,
-     y = c(1:9),
-     xlim = c(0,6),
-     las = 1,
-     ylab = "",
-     type = "n",
-     yaxt = "n",
-     xlab = "odds")
-axis(2, at = c(1:9), labels = rev(Burned.Res$name), cex.axis = 1, las = 2)
-
-points(x = rev(Lines.Res$est),y = c(1:9), cex = 1, col = "red", pch = 16)
-segments(x0 = rev(Lines.Res$lwr), y0 = c(1:9), x1 = rev(Lines.Res$upr), y1 = c(1:9), col = "red",lwd = 1.5)
-
-points(x = rev(Burned.Res$est),y = c(1:9), cex = 1, pch = 16)
-segments(x0 = rev(Burned.Res$lwr), y0 = c(1:9), x1 = rev(Burned.Res$upr), y1 = c(1:9),lwd = 1.5)
-abline(v = 1, lty = 2)
-
-legend("bottomright",
-       pch = 15,
-       col = c("black", "red"),
-       bty = "n",
-       legend = c("Burn","Fire Line"))
-par(oma = c(0,0,0,0))
-
-
 #### Calculating spatial autocorrelation eigen vectors for random forest ####
 ## models will need to be run twice to reproduce results
 ## once with all data, a second time with the removal of 4 largest fires (supplement)
@@ -1263,6 +1103,7 @@ dat$cell <- NULL
 dat$stat <- as.integer(ifelse(dat$stat == "EF", 0,1)) ## turning into integer for correlog
 
 optimal_increment <- max(dist(dat[, c("x", "y")])) / 15 ## trying to shoot for 15 - 20 bins
+## correlogram can take a few minutes to run
 correlogram <- ncf::correlog(x = dat$x, y = dat$y, z = dat$stat,
                             increment = optimal_increment, ## optimal distance
                             resamp = 100, ## number of bootstrap resamples 
@@ -1270,13 +1111,20 @@ correlogram <- ncf::correlog(x = dat$x, y = dat$y, z = dat$stat,
                             na.rm = TRUE, 
                             quiet = FALSE)
 plot(correlogram)
-dist_threshold <- as.numeric(correlogram$x.intercept) ## 25566.42 for whole dataset if the correlogram fn isn't working. This is in m
+dist_threshold <- as.numeric(correlogram$x.intercept) 
+## 33067.81 for whole dataset if the correlogram fn isn't working. This is in m
+## 220238.2 for subset without large fires. Also in m
 
 ## PCNM method for spatial autocorrelation
 dmat <- as.matrix(dist(cbind(dat$y, dat$x))) ## turning the coordinates of each plot into a distance matrix
 pcnm_results <- pcnm(dmat, threshold = dist_threshold)
 plot(pcnm_results$values)
-points(pcnm_results$values[(1:50)], col = "red") ## somewhere between 30 and 50
+slopes <- NA ## looking at slopes to determine when curve flattens
+for(i in 1:200){
+  slopes[i] <- (pcnm_results$values[i+1] - pcnm_results$values[i])/((i+1)-i) 
+}
+plot(slopes)
+points(slopes[(1:30)], col = "red") ## 30 is sufficient
 
 num_eigenvectors <- 30
 eigen_res <- eigs_sym(as.matrix(dmat), k = num_eigenvectors)
@@ -1479,7 +1327,6 @@ for(i in 1:n){
   }
 }
 parallel::stopCluster(cl = local.cluster)
-
 
 ## pred vs obs plots
 y_hats.diff <- y_hats.diff*100 ## converting to %
@@ -1960,51 +1807,249 @@ lines(y = predict(lo), x = prop.oth.x.mean, col = "red", lwd = 2)
 rm(list = ls())
 gc()
 
-#### Fire Growth by Veg Type Figure ####
-FireData <- 
+#### Nonparametric Models ####
+SR <- vect("./Boundary/SouthernRockyBoundary_10kmBuff.shp") ## loading in the study area boundary, may or may not need to re:load based on where in script you are starting
+SR_Fires <- vect("./NIFC Polygons/SR_Fires.shp")
+SR_FLs <- vect("./NIFC Lines/SR_FLs.shp")
+Fires_add60 <- buffer(SR_Fires, 60)
+FLs_Engaged <- terra::intersect(SR_FLs, Fires_add60)
+
+## pulling in the landcover rasters again to count the number of pixels
+temp <- list.files(path = "./Predictor Rasters/Land Cover/",pattern="*.tif") ## creating a vector that has all the files in the working directory with .tif extensions
+for(i in 1:length(temp)) {
+  path <- paste("./Predictor Rasters/Land Cover/", temp[i], sep = "") ## specifying the relative pathway for assign
+  assign(temp[i], terra::rast(path)) ## assigning the rasters
+} ## loading in the raters I want
+
+sr_masked <- mask(Aspen_Binary.tif, SR) ## masking the layer to the SR
+tots <- as.integer(freq(sr_masked, value = 1)[3]) ## recording the number of cells == 1
+fires <- mask(sr_masked, SR_Fires) ## masking furhter to the burned areas
+burns <- as.integer(freq(fires, value = 1)[3]) ## recording the number of cells == 1
+FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE) ## final mask to the fire lines
+Fls <- as.integer(freq(FLs, value = 1)[3]) ## recording these cells
+gc()
+
+## repeating, but making sure that further additions are binded to original outputs
+## dougfir
+sr_masked <- mask(DougFir_Binary.tif, SR)
+tots.added <- as.integer(freq(sr_masked, value = 1)[3])
+tots <- c(tots, tots.added)
+fires <- mask(sr_masked, SR_Fires)
+burns.added <- as.integer(freq(fires, value = 1)[3])
+burns <- c(burns, burns.added)
+FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
+Fls.added <- as.integer(freq(FLs, value = 1)[3]) 
+Fls <- c(Fls, Fls.added)
+gc()
+
+## gambel
+sr_masked <- mask(Gambel_Binary.tif, SR)
+tots.added <- as.integer(freq(sr_masked, value = 1)[3])
+tots <- c(tots, tots.added)
+fires <- mask(sr_masked, SR_Fires)
+burns.added <- as.integer(freq(fires, value = 1)[3])
+burns <- c(burns, burns.added)
+FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
+Fls.added <- as.integer(freq(FLs, value = 1)[3])
+Fls <- c(Fls, Fls.added)
+gc()
+
+## grass
+sr_masked <- mask(Grass_Binary.tif, SR)
+tots.added <- as.integer(freq(sr_masked, value = 1)[3])
+tots <- c(tots, tots.added)
+fires <- mask(sr_masked, SR_Fires)
+burns.added <- as.integer(freq(fires, value = 1)[3])
+burns <- c(burns, burns.added)
+FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
+Fls.added <- as.integer(freq(FLs, value = 1)[3])
+Fls <- c(Fls, Fls.added)
+gc()
+
+## lodgepole
+sr_masked <- mask(Lodgepole_Binary.tif, SR)
+tots.added <- as.integer(freq(sr_masked, value = 1)[3])
+tots <- c(tots, tots.added)
+fires <- mask(sr_masked, SR_Fires)
+burns.added <- as.integer(freq(fires, value = 1)[3])
+burns <- c(burns, burns.added)
+FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
+Fls.added <- as.integer(freq(FLs, value = 1)[3])
+Fls <- c(Fls, Fls.added)
+gc()
+
+## other
+sr_masked <- mask(Other_Binary.tif, SR)
+tots.added <- as.integer(freq(sr_masked, value = 1)[3])
+tots <- c(tots, tots.added)
+fires <- mask(sr_masked, SR_Fires)
+burns.added <- as.integer(freq(fires, value = 1)[3])
+burns <- c(burns, burns.added)
+FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
+Fls.added <- as.integer(freq(FLs, value = 1)[3])
+Fls <- c(Fls, Fls.added)
+gc()
+
+## PJ
+sr_masked <- mask(PJ_Binary.tif, SR)
+tots.added <- as.integer(freq(sr_masked, value = 1)[3])
+tots <- c(tots, tots.added)
+fires <- mask(sr_masked, SR_Fires)
+burns.added <- as.integer(freq(fires, value = 1)[3])
+burns <- c(burns, burns.added)
+FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
+Fls.added <- as.integer(freq(FLs, value = 1)[3])
+Fls <- c(Fls, Fls.added)
+gc()
+
+## ponderosa
+sr_masked <- mask(Ponderosa_Binary.tif, SR)
+tots.added <- as.integer(freq(sr_masked, value = 1)[3])
+tots <- c(tots, tots.added)
+fires <- mask(sr_masked, SR_Fires)
+burns.added <- as.integer(freq(fires, value = 1)[3])
+burns <- c(burns, burns.added)
+FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
+Fls.added <- as.integer(freq(FLs, value = 1)[3]) 
+Fls <- c(Fls, Fls.added)
+gc()
+
+## SF
+sr_masked <- mask(SF_Binary.tif, SR)
+tots.added <- as.integer(freq(sr_masked, value = 1)[3])
+tots <- c(tots, tots.added)
+fires <- mask(sr_masked, SR_Fires)
+burns.added <- as.integer(freq(fires, value = 1)[3])
+burns <- c(burns, burns.added)
+FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
+Fls.added <- as.integer(freq(FLs, value = 1)[3])
+Fls <- c(Fls, Fls.added)
+gc()
+
+## shrub
+sr_masked <- mask(Shrub_Binary.tif, SR)
+tots.added <- as.integer(freq(sr_masked, value = 1)[3])
+tots <- c(tots, tots.added)
+fires <- mask(sr_masked, SR_Fires)
+burns.added <- as.integer(freq(fires, value = 1)[3])
+burns <- c(burns, burns.added)
+FLs <- mask(sr_masked, FLs_Engaged, touches = TRUE)
+Fls.added <- as.integer(freq(FLs, value = 1)[3]) 
+Fls <- c(Fls, Fls.added)
+gc()
+
+
+ID <- tolower(gsub("_Binary.tif", x = temp, ""))
+cellcounts <- data.frame(name = ID,
+                         tot = tots,
+                         burn = burns,
+                         Fls = Fls)
+write.csv(cellcounts, "./Results/cellcounts.csv")
+rm(list = temp)
+
+## statistical analysis
+cellcounts <- read.csv("./Results/cellcounts.csv")
+
+## burned vs landscape
+burned <- cellcounts$burn
+unburned <- cellcounts$tot - cellcounts$burn
+BurnedMat <- matrix(c(burned, unburned), nrow = 10)
+colnames(BurnedMat) <- c("burned", "unburned")
+rownames(BurnedMat) <- cellcounts$name
+chisq.test(BurnedMat) ## difference in representation in burns
+
+Burned.Res <- data.frame(name = cellcounts$name[-1],
+                         est = NA,
+                         lwr = NA,
+                         upr = NA)
+for(i in 2:nrow(BurnedMat)){
+  mod <- fisher.test(BurnedMat[c(i,1),])
+  Burned.Res$est[i-1] <- mod$estimate
+  Burned.Res$lwr[i-1] <- mod$conf.int[1]
+  Burned.Res$upr[i-1] <- mod$conf.int[2]
+}
+
+## fire lines vs burned
+firelines <- cellcounts$Fls
+nolines <- cellcounts$burn - cellcounts$Fls
+LinesMat <- matrix(c(firelines, nolines), nrow = 10)
+colnames(LinesMat) <- c("lines", "nolines")
+rownames(LinesMat) <- cellcounts$name
+chisq.test(LinesMat) ## difference in representation in burns
+
+Lines.Res <- data.frame(name = cellcounts$name[-1],
+                        est = NA,
+                        lwr = NA,
+                        upr = NA)
+for(i in 2:nrow(LinesMat)){
+  mod <- fisher.test(LinesMat[c(i,1),])
+  Lines.Res$est[i-1] <- mod$estimate
+  Lines.Res$lwr[i-1] <- mod$conf.int[1]
+  Lines.Res$upr[i-1] <- mod$conf.int[2]
+}
+
+## Plotting Non Parametric Models
+par(mfrow = c(1,1),oma = c(0,2.5,0,0))
+
+max(Burned.Res$upr);max(Lines.Res$upr)
+
+plot(x = Burned.Res$est,
+     y = c(1:9),
+     xlim = c(0,6),
+     las = 1,
+     ylab = "",
+     type = "n",
+     yaxt = "n",
+     xlab = "odds")
+axis(2, at = c(1:9), labels = rev(Burned.Res$name), cex.axis = 1, las = 2)
+
+points(x = rev(Lines.Res$est),y = c(1:9), cex = 1, col = "red", pch = 16)
+segments(x0 = rev(Lines.Res$lwr), y0 = c(1:9), x1 = rev(Lines.Res$upr), y1 = c(1:9), col = "red",lwd = 1.5)
+
+points(x = rev(Burned.Res$est),y = c(1:9), cex = 1, pch = 16)
+segments(x0 = rev(Burned.Res$lwr), y0 = c(1:9), x1 = rev(Burned.Res$upr), y1 = c(1:9),lwd = 1.5)
+abline(v = 1, lty = 2)
+
+legend("bottomright",
+       pch = 15,
+       col = c("black", "red"),
+       bty = "n",
+       legend = c("Burn","Fire Line"))
+par(oma = c(0,0,0,0))
+
+rm(list = ls())
+gc()
+
+#### Fire Line Status by Land Cover as a Function of Growth ####
+FireData <- read.csv("./Results/CleanedFireLines.csv")
+
 par(mfrow = c(1,1))
-# FireData <- FD ## determines whether the whole dataset or subset dataset is used to look at fire growth by vegetation type
-gr.stat <- data.frame(failed = c(mean(FireData$Growth[FireData$LineStat == 0 & FireData$prop.sf >= 0.5]),
-                                 mean(FireData$Growth[FireData$LineStat == 0 & FireData$prop.pico >= 0.5]),
-                                 mean(FireData$Growth[FireData$LineStat == 0 & FireData$prop.asp >= 0.5]),
-                                 mean(FireData$Growth[FireData$LineStat == 0 & FireData$prop.psme >= 0.5]),
-                                 mean(FireData$Growth[FireData$LineStat == 0 & FireData$prop.pipo >= 0.5]),
-                                 mean(FireData$Growth[FireData$LineStat == 0 & FireData$prop.pj >= 0.5]),
-                                 mean(FireData$Growth[FireData$LineStat == 0 & FireData$prop.oak >= 0.5]),
-                                 mean(FireData$Growth[FireData$LineStat == 0 & FireData$prop.shr >= 0.5]),
-                                 mean(FireData$Growth[FireData$LineStat == 0 & FireData$prop.grs >= 0.5]),
-                                 mean(FireData$Growth[FireData$LineStat == 0 & FireData$prop.oth >= 0.5])),
-                      held = c(mean(FireData$Growth[FireData$LineStat == 1 & FireData$prop.sf >= 0.5]),
-                               mean(FireData$Growth[FireData$LineStat == 1 & FireData$prop.pico >= 0.5]),
-                               mean(FireData$Growth[FireData$LineStat == 1 & FireData$prop.asp >= 0.5]),
-                               mean(FireData$Growth[FireData$LineStat == 1 & FireData$prop.psme >= 0.5]),
-                               mean(FireData$Growth[FireData$LineStat == 1 & FireData$prop.pipo >= 0.5]),
-                               mean(FireData$Growth[FireData$LineStat == 1 & FireData$prop.pj >= 0.5]),
-                               mean(FireData$Growth[FireData$LineStat == 1 & FireData$prop.oak >= 0.5]),
-                               mean(FireData$Growth[FireData$LineStat == 1 & FireData$prop.shr >= 0.5]),
-                               mean(FireData$Growth[FireData$LineStat == 1 & FireData$prop.grs >= 0.5]),
-                               mean(FireData$Growth[FireData$LineStat == 1 & FireData$prop.oth >= 0.5])),
-                      SE.failed = c((sd(FireData$Growth[FireData$LineStat == 0 & FireData$prop.sf >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 0 & FireData$prop.sf >= 0.5]))),
-                                    (sd(FireData$Growth[FireData$LineStat == 0 & FireData$prop.pico >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 0 & FireData$prop.pico >= 0.5]))),
-                                    (sd(FireData$Growth[FireData$LineStat == 0 & FireData$prop.asp >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 0 & FireData$prop.asp >= 0.5]))),
-                                    (sd(FireData$Growth[FireData$LineStat == 0 & FireData$prop.psme >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 0 & FireData$prop.psme >= 0.5]))),
-                                    (sd(FireData$Growth[FireData$LineStat == 0 & FireData$prop.pipo >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 0 & FireData$prop.pipo >= 0.5]))),
-                                    (sd(FireData$Growth[FireData$LineStat == 0 & FireData$prop.pj >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 0 & FireData$prop.pj >= 0.5]))),
-                                    (sd(FireData$Growth[FireData$LineStat == 0 & FireData$prop.oak >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 0 & FireData$prop.oak >= 0.5]))),
-                                    (sd(FireData$Growth[FireData$LineStat == 0 & FireData$prop.shr >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 0 & FireData$prop.shr >= 0.5]))),
-                                    (sd(FireData$Growth[FireData$LineStat == 0 & FireData$prop.grs >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 0 & FireData$prop.grs >= 0.5]))),
-                                    (sd(FireData$Growth[FireData$LineStat == 0 & FireData$prop.oth >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 0 & FireData$prop.oth >= 0.5])))),
-                      SE.held = c((sd(FireData$Growth[FireData$LineStat == 1 & FireData$prop.sf >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 1 & FireData$prop.sf >= 0.5]))),
-                                  (sd(FireData$Growth[FireData$LineStat == 1 & FireData$prop.pico >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 1 & FireData$prop.pico >= 0.5]))),
-                                  (sd(FireData$Growth[FireData$LineStat == 1 & FireData$prop.asp >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 1 & FireData$prop.asp >= 0.5]))),
-                                  (sd(FireData$Growth[FireData$LineStat == 1 & FireData$prop.psme >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 1 & FireData$prop.psme >= 0.5]))),
-                                  (sd(FireData$Growth[FireData$LineStat == 1 & FireData$prop.pipo >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 1 & FireData$prop.pipo >= 0.5]))),
-                                  (sd(FireData$Growth[FireData$LineStat == 1 & FireData$prop.pj >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 1 & FireData$prop.pj >= 0.5]))),
-                                  (sd(FireData$Growth[FireData$LineStat == 1 & FireData$prop.oak >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 1 & FireData$prop.oak >= 0.5]))),
-                                  (sd(FireData$Growth[FireData$LineStat == 1 & FireData$prop.shr >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 1 & FireData$prop.shr >= 0.5]))),
-                                  (sd(FireData$Growth[FireData$LineStat == 1 & FireData$prop.grs >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 1 & FireData$prop.grs >= 0.5]))),
-                                  (sd(FireData$Growth[FireData$LineStat == 1 & FireData$prop.oth >= 0.5])/sqrt(length(FireData$Growth[FireData$LineStat == 1 & FireData$prop.oth >= 0.5])))))
-rownames(gr.stat) <- c("Spruce/Fir", "Lodgepole", "Aspen", "Douglas Fir", "Ponderosa", "Pinyon/Juniper", "Gambel Oak", "Shrubland", "Grassland", "Other")
+mean(FireData$Growth[FireData$stat == "EF",])
+
+veg_types <- gsub("_prop", x = (colnames(FireData)[13:22]),replace = "")
+
+# Function to calculate stats for a given LineStat value
+calc_stats <- function(data, stat, veg_types) {
+  sapply(veg_types, function(v) {
+    prop_col <- paste0(v,"_prop")
+    subset <- data$Growth[data$stat == stat & data[[prop_col]] >= 0.5]
+    c(mean = mean(subset), 
+      se = sd(subset) / sqrt(length(subset)))
+  })
+}
+
+# Calculate for failed (LineStat == 0) and held (LineStat == 1)
+failed_stats <- calc_stats(FireData, "EF", veg_types)
+held_stats <- calc_stats(FireData, "EH", veg_types)
+
+# Create the data frame
+gr.stat <- data.frame(
+  failed = failed_stats["mean", ],
+  held = held_stats["mean", ],
+  SE.failed = failed_stats["se", ],
+  SE.held = held_stats["se", ]
+)
+
 gr.stat$lwr.fail <- gr.stat$failed - (1.96*gr.stat$SE.failed)
 gr.stat$lwr.held <- gr.stat$held - (1.96*gr.stat$SE.held)
 
@@ -2012,8 +2057,9 @@ gr.stat$upr.fail <- gr.stat$failed + (1.96*gr.stat$SE.failed)
 gr.stat$upr.held <- gr.stat$held + (1.96*gr.stat$SE.held)
 
 par(oma = c(1.5,1,0,0))
+max(gr.stat)
 plot(gr.stat$failed,
-     ylim = c(0,4000), ## 12000 v 4000
+     ylim = c(0,max(gr.stat)+500), 
      las = 1,
      ylab = "",
      type = "n",
@@ -2033,15 +2079,14 @@ legend("topleft",
        bty = "n",
        legend = c("Failed Lines","Held Lines"))
 
-t.test(FireData$Growth[FireData$LineStat == 0 & FireData$prop.sf >= 0.5], FireData$Growth[FireData$LineStat == 1 & FireData$prop.sf >= 0.5])
-t.test(FireData$Growth[FireData$LineStat == 0 & FireData$prop.pico >= 0.5], FireData$Growth[FireData$LineStat == 1 & FireData$prop.pico >= 0.5])
-t.test(FireData$Growth[FireData$LineStat == 0 & FireData$prop.asp >= 0.5], FireData$Growth[FireData$LineStat == 1 & FireData$prop.asp >= 0.5])
-t.test(FireData$Growth[FireData$LineStat == 0 & FireData$prop.psme >= 0.5], FireData$Growth[FireData$LineStat == 1 & FireData$prop.psme >= 0.5])
-t.test(FireData$Growth[FireData$LineStat == 0 & FireData$prop.pipo >= 0.5], FireData$Growth[FireData$LineStat == 1 & FireData$prop.pipo >= 0.5])
-t.test(FireData$Growth[FireData$LineStat == 0 & FireData$prop.pj >= 0.5], FireData$Growth[FireData$LineStat == 1 & FireData$prop.pj >= 0.5])
-t.test(FireData$Growth[FireData$LineStat == 0 & FireData$prop.oak >= 0.5], FireData$Growth[FireData$LineStat == 1 & FireData$prop.oak >= 0.5])
-t.test(FireData$Growth[FireData$LineStat == 0 & FireData$prop.shr >= 0.5], FireData$Growth[FireData$LineStat == 1 & FireData$prop.shr >= 0.5])
-t.test(FireData$Growth[FireData$LineStat == 0 & FireData$prop.grs >= 0.5], FireData$Growth[FireData$LineStat == 1 & FireData$prop.grs >= 0.5])
-t.test(FireData$Growth[FireData$LineStat == 0 & FireData$prop.oth >= 0.5], FireData$Growth[FireData$LineStat == 1 & FireData$prop.oth >= 0.5])
+## t.tests - work on altering this function.... 
+calc_stats <- function(data, stat, veg_types) {
+  sapply(veg_types, function(v) {
+    prop_col <- paste0(v,"_prop")
+    subset <- data$Growth[data$stat == stat & data[[prop_col]] >= 0.5]
+    c(estimate = t.test(subset)$, 
+      se = sd(subset) / sqrt(length(subset)))
+  })
+}
 
 rm(gr.stat)
