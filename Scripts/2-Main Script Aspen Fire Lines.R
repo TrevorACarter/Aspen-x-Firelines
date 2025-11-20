@@ -1085,9 +1085,14 @@ rm(FDmod)
 ## models will need to be run twice to reproduce results
 ## once with all data, a second time with the removal of 4 largest fires (supplement)
 
-## uncomment this code for supplemental analysis of 
+## uncomment this code for supplemental analysis of fires minus 4 largest
+#
+#
 # vec <- c("cameronpeak","mullen","easttroublesome","hermitspeak") ## 4 largest fires
 # FireData <- FireData[!FireData$fire %in% vec,] ## subsetting out megafires
+#
+#
+#
 
 ## spatially thinning my data to keep 1 sample per 100 x 100 m cell
 dat <- FireData
@@ -1140,18 +1145,26 @@ dat$stat <- as.factor(dat$stat)
 colnames(dat)
 dat_sub <- dat[c(2,9:23,28,30:59)]
 
+level1 <- dat_sub[dat_sub$stat == levels(dat_sub$stat)[1], ]
+level2 <- dat_sub[dat_sub$stat == levels(dat_sub$stat)[2], ]
+set.seed(1)
+EF_sample <- level1[sample(nrow(level1), 1000, replace = FALSE), ]
+set.seed(1)
+EH_sample <- level2[sample(nrow(level2), 1000, replace = FALSE), ]
+dat_sub_training <- rbind(EF_sample, EH_sample)
+
 train_control <- trainControl(method = "cv", number = 5, p = 0.25)
 set.seed(1)
-train_index <- createDataPartition(y = dat_sub$stat, p = 0.75, list = FALSE) ## prev. 0.8
-training_set <- dat_sub[train_index,]
-testing_set <- dat_sub[-train_index,]
+train_index <- createDataPartition(y = dat_sub_training$stat, p = 0.75, list = FALSE) ## prev. 0.8
+training_set <- dat_sub_training[train_index,]
+testing_set <- dat_sub_training[-train_index,]
 
 ## Spatial Block
 set.seed(1) ## setting seed
-vec <- order(dmat[sample(1:nrow(dat_sub),1),]) ## getting rows in order of distance to random point generated
-vec <- vec[c(1:(0.75*nrow(dat_sub)))]
-training_set <- dat_sub[vec,]
-testing_set <- dat_sub[-vec,]
+vec <- order(dmat[sample(1:nrow(dat_sub_training),1),]) ## getting rows in order of distance to random point generated
+vec <- vec[c(1:(0.75*nrow(dat_sub_training)))]
+training_set <- dat_sub_training[vec,]
+testing_set <- dat_sub_training[-vec,]
 
 1-length(which(training_set$stat == 0))/length(training_set$stat) ## unbalanced withouth megafires - most lines hold
 
@@ -1248,9 +1261,9 @@ for(i in 1:n){
   set.seed(i)
   vec <- order(dmat[sample(1:nrow(dat_sub),1),]) ## getting rows in order of distance to random point generated
   vec <- vec[c(1:(0.75*nrow(dat_sub)))]
-  training_set <- dat_sub[vec,]
+  training_set <- as.data.frame(dat_sub[vec,])
   balance[i] <- 1-length(which(training_set$stat == 0))/length(training_set$stat)
-  testing_set <- dat_sub[-vec,]
+  testing_set <- as.data.frame(dat_sub[-vec,])
   set.seed(i)
   rf <- randomForest(stat~.,
                      data = training_set,
@@ -1411,7 +1424,6 @@ prop.shr.y <- 1-(1/(1+exp(-prop.shr.y)))*2
 prop.oth.y <- 1-(1/(1+exp(-prop.oth.y)))*2
 prop.asp.y <- 1-(1/(1+exp(-prop.asp.y)))*2
 prop.grs.y <- 1-(1/(1+exp(-prop.grs.y)))*2
-perim_m.y <- 1-(1/(1+exp(-perim_m.y)))*2
 gc()
 
 par(mfrow = c(4,4))
@@ -2023,8 +2035,11 @@ gc()
 #### Fire Line Status by Land Cover as a Function of Growth ####
 FireData <- read.csv("./Results/CleanedFireLines.csv")
 
+## uncomment this code for supplemental analysis of 
+# vec <- c("cameronpeak","mullen","easttroublesome","hermitspeak") ## 4 largest fires
+# FireData <- FireData[!FireData$fire %in% vec,] ## subsetting out megafires
+
 par(mfrow = c(1,1))
-mean(FireData$Growth[FireData$stat == "EF",])
 
 veg_types <- gsub("_prop", x = (colnames(FireData)[13:22]),replace = "")
 
@@ -2073,20 +2088,37 @@ segments(x0 = c(0.9,1.9,2.9,3.9,4.9,5.9,6.9,7.9,8.9,9.9), y0 = gr.stat$lwr.fail,
 points(x = c(1.1,2.1,3.1,4.1,5.1,6.1,7.1,8.1,9.1,10.1),y = gr.stat$held, col = "navy", cex = 1, pch = 16)
 segments(x0 = c(1.1,2.1,3.1,4.1,5.1,6.1,7.1,8.1,9.1,10.1), y0 = gr.stat$lwr.held, x1 = c(1.1,2.1,3.1,4.1,5.1,6.1,7.1,8.1,9.1,10.1), y1 = gr.stat$upr.held, col = "navy",lwd = 1.5)
 
-legend("topleft",
+legend("topright",
        pch = 16,
        col = c("darkgoldenrod", "navy"),
        bty = "n",
        legend = c("Failed Lines","Held Lines"))
 
-## t.tests - work on altering this function.... 
-calc_stats <- function(data, stat, veg_types) {
+## t.tests
+t.test(seq(1:10),seq(2:20))$p.value
+
+calc_stats <- function(data, stat1, stat2, veg_types) {
   sapply(veg_types, function(v) {
     prop_col <- paste0(v,"_prop")
-    subset <- data$Growth[data$stat == stat & data[[prop_col]] >= 0.5]
-    c(estimate = t.test(subset)$, 
-      se = sd(subset) / sqrt(length(subset)))
+    subset1 <- data$Growth[data$stat == stat1 & data[[prop_col]] >= 0.5]
+    subset2 <- data$Growth[data$stat == stat2 & data[[prop_col]] >= 0.5]
+    c(estimate.x = t.test(subset1, subset2)$estimate[1],
+      estimate.y = t.test(subset1, subset2)$estimate[2],
+      conf.int.lwr = t.test(subset1, subset2)$conf.int[1],
+      conf.int.upr = t.test(subset1, subset2)$conf.int[2],
+      p.val = t.test(subset1, subset2)$p.value)
   })
 }
+
+t.test_results <- as.data.frame(calc_stats(FireData, "EF","EH", veg_types))
+colnames(t.test_results)[t.test_results[5,] > 0.05]
+# "aspen" "grass" "other" "shrub" 
+## no significant differences in growth between failed and held lines
+
+## no large fires subset results
+# "aspen"     "dougfir"   "gambel"    "lodgepole" "pj"        "pondo"     "sf"   
+## no significant differences in growth between failed and held lines
+## only significant differences, are grass, other, shrub
+
 
 rm(gr.stat)
