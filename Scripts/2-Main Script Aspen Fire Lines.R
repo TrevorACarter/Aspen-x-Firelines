@@ -8,6 +8,7 @@ library(RSpectra) ## faster way to calculate eigen vectors
 library(caret) ## for random forest training
 library(randomForest) ## for random forest models
 library(pROC) ## needed for AUC
+library(randomForestSRC) ## for tuning RF
 setwd("D:/Aspen Firelines/data") ## set working directory to the data folder
 
 
@@ -893,9 +894,9 @@ hist(summaryTable$area_ha)
 ## rest look approx. correct
 summaryTable <- summaryTable[,c(1,5,2,3,4)]
 
-summaryTable$avg_linelength_m <- stats::aggregate(FireData$perim_m ~ FireData$fire, FUN = mean)[2]
-summaryTable$avg_linelength_m <- round(summaryTable$avg_linelength_m,0) ## writing the average line length
-
+avg_perim <-  stats::aggregate(FireData$perim_m ~ FireData$fire, FUN = mean)[2]
+avg_perim <- as.vector(round(avg_perim$`FireData$perim_m`,0))
+summaryTable$avg_linelength_m <- avg_perim
 write.csv(summaryTable, "./Results/Table1.csv")
 
 str(summaryTable)
@@ -925,7 +926,7 @@ barplot(height = tots$tot.area/1000, names = tots$year,
         las = 1,
         ylim = c(0,300),
         xlab = "")
-mtext("Total Area Burned (10,000 ha)", side = 2, line = 4)
+mtext("Total Area Burned (1,000 ha)", side = 2, line = 4)
 text(x = c(0.75,1.9,3.1,4.3,5.5),
      y = (tots$tot.area/1000 + 15),
      cex = 1,
@@ -1148,23 +1149,32 @@ dat_sub <- dat[c(2,9:23,28,30:59)]
 level1 <- dat_sub[dat_sub$stat == levels(dat_sub$stat)[1], ]
 level2 <- dat_sub[dat_sub$stat == levels(dat_sub$stat)[2], ]
 set.seed(1)
-EF_sample <- level1[sample(nrow(level1), 1000, replace = FALSE), ]
+EF_sample <- level1[sample(nrow(level1), 1000, replace = TRUE), ]
 set.seed(1)
-EH_sample <- level2[sample(nrow(level2), 1000, replace = FALSE), ]
+EH_sample <- level2[sample(nrow(level2), 1000, replace = TRUE), ]
 dat_sub_training <- rbind(EF_sample, EH_sample)
 
 train_control <- trainControl(method = "cv", number = 5, p = 0.25)
 set.seed(1)
-train_index <- createDataPartition(y = dat_sub_training$stat, p = 0.75, list = FALSE) ## prev. 0.8
+train_index <- createDataPartition(y = dat_sub_training$stat, p = 0.8, list = FALSE) ## prev. 0.75
 training_set <- dat_sub_training[train_index,]
 testing_set <- dat_sub_training[-train_index,]
 
 ## Spatial Block
-set.seed(1) ## setting seed
-vec <- order(dmat[sample(1:nrow(dat_sub_training),1),]) ## getting rows in order of distance to random point generated
-vec <- vec[c(1:(0.75*nrow(dat_sub_training)))]
-training_set <- dat_sub_training[vec,]
-testing_set <- dat_sub_training[-vec,]
+# set.seed(1) ## setting seed
+# vec <- order(dmat[sample(1:nrow(dat_sub_training),1),]) ## getting rows in order of distance to random point generated
+# vec <- vec[c(1:(0.75*nrow(dat_sub_training)))]
+# training_set <- dat_sub_training[vec,]
+# testing_set <- dat_sub_training[-vec,]
+
+# Tune mtry and nodesize
+training_set <- as.data.frame(training_set)
+tuned_model <- tune.rfsrc(stat ~ ., data = training_set,
+                          nodesizeTry = c(1:9, seq(10, 100, by = 5)),
+                          ntree.try = 500)
+# View optimal parameters
+print(tuned_model)
+
 
 1-length(which(training_set$stat == 0))/length(training_set$stat) ## unbalanced withouth megafires - most lines hold
 
@@ -1173,7 +1183,7 @@ model <- train(stat~.,
                data = training_set,
                method = "rf",
                ntree = 500,
-               maxnodes = 75,
+               maxnodes = 100,
                keep.inbag = TRUE,
                keep.forest = TRUE,
                maximize = TRUE,
@@ -1259,16 +1269,20 @@ doParallel::registerDoParallel(cl = local.cluster) ## parallel processing to run
 
 for(i in 1:n){
   set.seed(i)
-  vec <- order(dmat[sample(1:nrow(dat_sub),1),]) ## getting rows in order of distance to random point generated
-  vec <- vec[c(1:(0.75*nrow(dat_sub)))]
-  training_set <- as.data.frame(dat_sub[vec,])
+  EF_sample <- level1[sample(nrow(level1), 1000, replace = FALSE), ]
+  set.seed(i)
+  EH_sample <- level2[sample(nrow(level2), 1000, replace = FALSE), ]
+  dat_sub <- rbind(EF_sample, EH_sample)
+  train_index <- createDataPartition(y = dat_sub_training$stat, p = 0.8, list = FALSE) ## prev. 0.75
+  training_set <- as.data.frame(dat_sub[train_index,])
+  testing_set <- as.data.frame(dat_sub[-train_index,])
   balance[i] <- 1-length(which(training_set$stat == 0))/length(training_set$stat)
-  testing_set <- as.data.frame(dat_sub[-vec,])
+  
   set.seed(i)
   rf <- randomForest(stat~.,
                      data = training_set,
                      ntree = 500,
-                     maxnodes = 75,
+                     maxnodes = 100,
                      maximize = TRUE,
                      trControl = train_control,
                      importance = TRUE,
@@ -1346,22 +1360,22 @@ y_hats.diff <- y_hats.diff*100 ## converting to %
 plot(x = 1:length(y_hats.diff), y = y_hats.diff,
      pch = 16,
      xlab = "model run",
-     ylim = c(0,max(y_hats.diff)+10),
+     ylim = c(min(y_hats.diff)-10,max(y_hats.diff)+10),
      las = 1,
      ylab = "% Difference in Predicted vs.Observed",
      cex = 1)
 abline(h = mean(y_hats.diff), col="firebrick4", lty = 2)
-text(x = 30, y = 60, paste("Average difference = ", round(mean(y_hats.diff), digits = 1),"%", sep = "")) 
+text(x = 30, y = 10, paste("Average difference = ", round(mean(y_hats.diff), digits = 1),"%", sep = "")) 
 
 mean(balance);min(balance);max(balance)
-# 0.6929666 - 0.9232063
-# 0.6466957 - 0.8952381
-# 0.7436456 - 0.9507937 far less balance on the no mega fire subset
+# 0.5 - 0.9232063
+# 0.5 - 0.8952381
+# 0.5 - 0.9507937 far less balance on the no mega fire subset
 
-error.mean <- apply(error,2,mean)
-min(error);max(error)
+error.mean <- apply(error,2,mean, na.rm = TRUE)
+min(error, na.rm = TRUE);max(error, na.rm = TRUE)
 plot(error.mean, type = "n",
-     ylim = c(0,max(error)+0.1),
+     ylim = c(0,max(error, na.rm = TRUE)+0.1),
      xlab = "Tree",
      ylab = "Error")
 for(i in 1:100){
@@ -1369,19 +1383,19 @@ for(i in 1:100){
 }
 lines(error.mean, type = "l", col = "firebrick", lty = 2, lwd= 2)
 error.mean[500]*100
-text(x = 300, y = 0.25, paste("Average error = ", round(error.mean[500]*100, digits = 1),"%", sep = "")) 
+text(x = 300, y = 0.3, paste("Average error = ", round(error.mean[500]*100, digits = 1),"%", sep = "")) 
 
 mean(AUC.val);min(AUC.val);max(AUC.val)
-# 0.8649068 0.8435496
-# 0.8424415 0.7550632
-# 0.8796143 0.9114035
+# 0.8531146 0.8435496
+# 0.8356489 0.7550632
+# 0.8659724 0.9114035
 
 ## VarImp Plot
 varImp.names[c(17:46),1]
 varImp.plotting <- data.frame(name = c(varImp.names[c(1:16),1],"spatial"),
-                              mean = c(apply(varImp.summary[c(1:16),],1,mean),mean( varImp.summary[c(17:46),])),
-                              min = c(apply(varImp.summary[c(1:16),],1,min),min( varImp.summary[c(17:46),])),
-                              max = c(apply(varImp.summary[c(1:16),],1,max),max( varImp.summary[c(17:46),])))
+                              mean = c(apply(varImp.summary[c(1:16),],1,mean,na.rm = TRUE),mean(varImp.summary[c(17:46),],na.rm = TRUE)),
+                              min = c(apply(varImp.summary[c(1:16),],1,min,na.rm = TRUE),min(varImp.summary[c(17:46),],na.rm = TRUE)),
+                              max = c(apply(varImp.summary[c(1:16),],1,max,na.rm = TRUE),max( varImp.summary[c(17:46),],na.rm = TRUE)))
 # varImp.plotting$name <- c("VPd","Elevation","Slope", "TPI","Aspen","Spruce/Fir",
 #                           "Pinyon/Juniper","Lodgepole","Ponderosa","Douglas/Fir",
 #                           "Oak","Shrubland","Grassland","Other","Growth", "Spatial")
@@ -1392,7 +1406,7 @@ len <- as.integer(nrow(varImp.plotting))
 par(mfrow = c(1,1), oma = c(0,3,0,0))
 plot(varImp.plotting$mean,
      ylim = c(0,len),
-     xlim = c(0,max(varImp.plotting$max)),
+     xlim = c(0,max(varImp.plotting$max,na.rm = TRUE)),
      las = 1,
      type = "n",
      ylab = "",
@@ -1448,8 +1462,8 @@ points(x = FD$Growth, y = jitter(FD$LineInt, factor = .25),
        col = rgb(0,0,0,0.25),
        pch = 16)
 growth.x.mean <- apply(growth.x,2,mean, na.rm = T)
-growth.y.mean <- apply(growth.y,2,mean)
-lo <- loess(growth.y.mean~growth.x.mean)
+growth.y.mean <- apply(growth.y,2,mean,, na.rm = T)
+lo <- loess(growth.y.mean~growth.x.mean, na.rm = TRUE)
 lines(y = predict(lo), x = growth.x.mean[1:length(predict(lo))], col = "red", lwd = 2)
 # fire growth over 5947.384 associated with failure
 
@@ -1999,6 +2013,11 @@ for(i in 2:nrow(LinesMat)){
   Lines.Res$lwr[i-1] <- mod$conf.int[1]
   Lines.Res$upr[i-1] <- mod$conf.int[2]
 }
+
+NonParametricResults <- cbind(Burned.Res,Lines.Res)
+NonParametricResults <- NonParametricResults[,-5]
+colnames(NonParametricResults) <- c("name", "burn.est", "burn.lwr", "burn.upr","fl.est","fl.lwr","fl.upr")
+write.csv(NonParametricResults,"./Results/NonParametricResults.csv")
 
 ## Plotting Non Parametric Models
 par(mfrow = c(1,1),oma = c(0,2.5,0,0))
