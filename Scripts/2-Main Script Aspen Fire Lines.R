@@ -858,25 +858,36 @@ gc()
 #### Visualizing Cleaned Fire Lines Data ####
 ## summary of data
 FireData <- read.csv("./Results/CleanedFireLines.csv")
-  
+
+length(unique(FireData$fire))
+## 36 fires
 table(FireData$stat)
+# EF   EH 
+# 1482 2813 
 (table(FireData$stat)/nrow(FireData))*100
 ## 35/65 split
 length(unique(FireData$fire))
+table(is.na(FireData$stat))
+
+groupedCounts <- as.data.frame(FireData %>% group_by(fire) %>% count(stat)) ## getting the count of failed/held lines by fire
+EF <- groupedCounts[groupedCounts$stat == "EF",] ## making a separate dataframe for EH/EF lines
+EH <- groupedCounts[groupedCounts$stat == "EH",]
+length(unique(FireData$fire)[!(unique(FireData$fire) %in% EF$fire)]) ## 9 fires don't have failed lines
+length(unique(FireData$fire)[!(unique(FireData$fire) %in% EH$fire)]) ## 1 fires doesn't have held lines
+EF[28:36,] <- NA ## adding in extra rows, to bind in the missing fires
+EH[36,] <- NA
+EF$fire[is.na(EF$fire)] <- unique(FireData$fire)[!(unique(FireData$fire) %in% EF$fire)] ## adding in the missing fires
+EH$fire[is.na(EH$fire)] <- unique(FireData$fire)[!(unique(FireData$fire) %in% EH$fire)] 
+EF$n[is.na(EF$n)] <- 0 ## adding the count of na files to the EH/EF data.frames
+EH$n[is.na(EH$n)] <- 0
 
 summaryTable <- data.frame(fire = unique(FireData$fire),
                            year = FireData$year[duplicated(FireData$fire) == FALSE],
-                           EH = NA,
-                           EF = NA)
-vec <- unique(FireData$fire)
-for(i in 1:length(vec)){
-  table(FireData$stat[FireData$fire == vec[i]])
-  summaryTable$EF[i] <- table(FireData$stat[FireData$fire == vec[i]])[1]
-  summaryTable$EH[i] <- table(FireData$stat[FireData$fire == vec[i]])[2]
-}
+                           EH = EH$n[match(unique(FireData$fire),EH$fire)] , 
+                           EF = EF$n[match(unique(FireData$fire),EF$fire)] )
 summaryTable <- summaryTable[order(summaryTable$fire),]
-summaryTable$EH[is.na(summaryTable$EH)] <- 0
-summaryTable$EF[is.na(summaryTable$EF)] <- 0
+sum(summaryTable$EH)
+sum(summaryTable$EF)
 
 SR_Fires <- vect("./NIFC Polygons/SR_Fires.shp")
 SR_Fires <- as.data.frame(SR_Fires)
@@ -894,10 +905,20 @@ hist(summaryTable$area_ha)
 ## rest look approx. correct
 summaryTable <- summaryTable[,c(1,5,2,3,4)]
 
-avg_perim <-  stats::aggregate(FireData$perim_m ~ FireData$fire, FUN = mean)[2]
-avg_perim <- as.vector(round(avg_perim$`FireData$perim_m`,0))
+avg_perim <-  stats::aggregate(FireData$perim_m ~ FireData$fire, FUN = mean)[2] ## writing it as a vector first
+avg_perim <- as.vector(round(avg_perim$`FireData$perim_m`,0)) ## this avoids a weird column name and odd structure after writing to csv
 summaryTable$avg_linelength_m <- avg_perim
 write.csv(summaryTable, "./Results/Table1.csv")
+
+sum(summaryTable$EH)/nrow(FireData)*100
+## 65% of lines held
+vec <- c("cameronpeak","mullen","easttroublesome","hermitspeak") ## 4 largest fires
+subset.FD <- FireData[!FireData$fire %in% vec,] ## subsetting out megafires
+subset.ST <- summaryTable[!summaryTable$fire %in% vec,]
+sum(subset.ST$EH)/nrow(subset.FD)*100
+## 82% of lines held when not considering 4 largest fires
+round(sum(summaryTable$EF)/sum(subset.ST$EF),0)
+## a 6 fold increase in the number of line failures when considering all fires vs. subset
 
 str(summaryTable)
 tots <- data.frame(year = c(2019,2020,2021,2022,2023),
@@ -932,7 +953,6 @@ text(x = c(0.75,1.9,3.1,4.3,5.5),
      cex = 1,
      labels = tots$n.fires)
 
-
 fl.mat <- as.matrix(tots[,c(4,5)])
 rownames(fl.mat) <- c("2019", "2020", "2021","2022", "2023")
 colnames(fl.mat) <- c("EF", "EH")
@@ -951,6 +971,7 @@ text(x = c(1.5,4.5,7.5,10.4,13.5,2.5,5.5,8.5,11.5,14.5),
      labels = as.vector(fl.mat))
 
 rm(fl.mat);rm(SR_Fires);rm(summaryTable);rm(tots);rm(i);rm(vec)
+rm(EF);rm(EH);rm(groupedCounts);rm(subset.FD);rm(subset.ST);rm(avg_perim)
 
 #### Variable Checking ####
 colnames(FireData)
@@ -1160,13 +1181,6 @@ train_index <- createDataPartition(y = dat_sub_training$stat, p = 0.8, list = FA
 training_set <- dat_sub_training[train_index,]
 testing_set <- dat_sub_training[-train_index,]
 
-## Spatial Block
-# set.seed(1) ## setting seed
-# vec <- order(dmat[sample(1:nrow(dat_sub_training),1),]) ## getting rows in order of distance to random point generated
-# vec <- vec[c(1:(0.75*nrow(dat_sub_training)))]
-# training_set <- dat_sub_training[vec,]
-# testing_set <- dat_sub_training[-vec,]
-
 # Tune mtry and nodesize
 training_set <- as.data.frame(training_set)
 tuned_model <- tune.rfsrc(stat ~ ., data = training_set,
@@ -1250,7 +1264,7 @@ prop.grs.y <- matrix(data = NA, nrow = n, ncol = 51)
 perim_m.x <- matrix(data = NA, nrow = n, ncol = 51)
 perim_m.y <- matrix(data = NA, nrow = n, ncol = 51)
 
-training_list <- vector("list", n) 
+testing_list <- vector("list", n) 
 
 rf.res <- matrix(data = NA, nrow = n, ncol = nrow(training_set))
 
@@ -1291,7 +1305,7 @@ for(i in 1:n){
                      keep.forest = TRUE,
                      keep.inbag = TRUE) ## making the rf object
   y_hats[i,1:nrow(testing_set)] <- predict(object = rf, newdata = testing_set[, -1],type = "prob")[,2] ## predicted probability of holding
-  training_list[[i]] <- testing_set
+  testing_list[[i]] <- testing_set
   y_hats.diff[i] <- mean(round(as.numeric(y_hats[i,1:nrow(testing_set)]),0) - (as.numeric(testing_set$stat)-1))
   varImp.summary[,i] <- rf$importance[,3]
   varImp.names[,i] <- rownames(rf$importance)
@@ -1389,9 +1403,9 @@ error.mean[500]*100
 text(x = 300, y = 0.3, paste("Average error = ", round(error.mean[500]*100, digits = 1),"%", sep = "")) 
 
 mean(AUC.val);min(AUC.val);max(AUC.val)
-# 0.8693073 0.8435496
-# 0.8571117 0.7550632
-# 0.8829914 0.9114035
+# 0.866342 0.8435496
+# 0.8501945 0.7550632
+# 0.8845094 0.9114035
 
 ## VarImp Plot
 varImp.names[c(17:46),1]
@@ -1591,7 +1605,6 @@ lo <- loess(perim_m.y.mean~perim_m.x.mean)
 lines(y = predict(lo), x = perim_m.x.mean, col = "red", lwd = 2)
 
 ## community types
-# par(mfrow = c(3,3))
 plot(prop.sf.x[1,], prop.sf.y[1,],
      type = "l",
      ylim = c(-0.25,1.25),
@@ -1808,7 +1821,6 @@ prop.grs.y.mean <- apply(prop.grs.y,2,mean)
 lo <- loess(prop.grs.y.mean~prop.grs.x.mean, na.rm = T)
 lines(y = predict(lo), x = prop.grs.x.mean[1:length(predict(lo))], col = "red", lwd = 2)
 
-# par(mfrow = c(1,1))
 plot(prop.oth.x[1,], prop.oth.y[1,],
      type = "l",
      ylim = c(-0.25,1.25),
@@ -1833,23 +1845,70 @@ prop.oth.y.mean <- apply(prop.oth.y,2,mean)
 lo <- loess(prop.oth.y.mean~prop.oth.x.mean)
 lines(y = predict(lo), x = prop.oth.x.mean, col = "red", lwd = 2)
 
+## linear model of predicted probability of line holding
 par(mfrow = c(1,1))
-colnames(training_list[[1]])
-## growth
-plot(y_hats[1,] ~ as.numeric(training_list[[1]][,17]))
-abline(lm(y_hats[1,] ~ as.numeric(training_list[[1]][,17])))
-abline(h = 0.5, lty = 2)
-summary(lm(y_hats[1,] ~ as.numeric(training_list[[1]][,17])))
-plot(residuals(lm(y_hats[1,] ~ as.numeric(training_list[[1]][,17]))))
+## creating empty dataframes/vectors
+p.val <- data.frame(matrix(ncol = 17, nrow = 100))
+colnames(p.val) <- c("intercept", colnames(testing_list[[1]])[2:17])
+est <- data.frame(matrix(ncol = 17, nrow = 100))
+colnames(est) <- c("intercept", colnames(testing_list[[1]])[2:17])
+r.sq <- NA
 
-plot(y_hats[1,] ~ as.numeric(training_list[[1]][,6]))
-abline(lm(y_hats[1,] ~ as.numeric(training_list[[1]][,6])))
-abline(h = 0.5, lty = 2)
-summary(lm(y_hats[1,] ~ as.numeric(training_list[[1]][,6])))
-plot(residuals(lm(y_hats[1,] ~ as.numeric(training_list[[1]][,6]))))
+newdata_list <- vector("list", n) ## creating list to store 'newdata' holds all other predictors at average while varying partial effects of predictor of interest
+preds_list <- vector("list", n) ## output list for predictors
+vec <- seq(1:16) ## number of predictors
+## this for loop goes through each of i:100 training_set dfs to make linear models
+## after models are constructed the partial effects of j:16 predictors are pulled out and stored
 
+for(i in 1:n){
+  mod <- lm(y_hats[i,] ~ ., data = testing_list[[i]][2:17])
+  mod.sum <- summary(mod)
+  p.val[i,] <- mod.sum$coefficients[,4]
+  est[i,] <- mod.sum$coefficients[,1]
+  r.sq[i] <- mod.sum$r.squared
+  
+  for(j in 1:length(vec)){
+    newdata <- data.frame(matrix(ncol = 16, nrow = 30))
+    colnames(newdata) <- c(colnames(testing_list[[i]])[2:17])
+    newdata[,j] <- seq(min(testing_list[[i]][j+1]),max(testing_list[[i]][j+1]), length.out = 30)
+    columnMeans <- colMeans(testing_list[[i]][2:17])
+    newdata[1:30,vec[-j]] <- rep(columnMeans[vec[-j]],each = 30)
+    newdata_list[[i]][[j]] <- newdata
+    preds <- predict(mod, newdata, type="response")
+    preds_list[[i]][[j]] <- preds
+  }
+}
 
-# rm(list = ls())
+hist(r.sq) ## looking at the distribution of r.sq
+for(i in 1:ncol(p.val)){
+  ifelse(length(which(p.val[,i] < 0.05))>5, print(colnames(p.val)[i]), NA)
+} ## if p values < 0.05 for more than 5 of 100 model runs, there is likely a difference in the distributions 
+
+newdata_avg <- data.frame(matrix(ncol = 30, nrow = 100)) ## storing newdata for each of j:16 predictors
+preds_avg <- data.frame(matrix(ncol = 30, nrow = 100)) ## storing predictions as well
+
+par(mfrow = c(4,4)) ## reset the plotting to 4 x 4
+## for loop to plot each of the data and lines for the partial effect of each predictor variable (j)
+for(j in 1:length(vec)){
+  plot(y_hats[1,] ~ as.numeric(testing_list[[1]][,j+1]),
+       ylab = "predicted line status",
+       las = 1,
+       xlab = colnames(testing_list[[1]])[j+1],
+       pch = 16,
+       col = adjustcolor("black",alpha.f = 0.01))
+  for(i in 1:n){
+    points(y_hats[i,] ~ as.numeric(testing_list[[i]][,j+1]),
+           pch = 16,
+           col = adjustcolor("black",alpha.f = 0.01))
+    lines(newdata_list[[i]][[j]][,j], preds_list[[i]][[j]], lty=1, col = adjustcolor("black",alpha.f = 0.1))
+    newdata_avg[i,] <- newdata_list[[i]][[j]][,j]
+    preds_avg[i,] <- preds_list[[i]][[j]]
+  }
+  abline(h = 0.5, lty = 2)
+  lines(apply(newdata_avg,2,mean), apply(preds_avg,2,mean), col = "red")
+}
+
+rm(list = ls()) ## cleaning global env
 gc()
 
 #### Nonparametric Models ####
