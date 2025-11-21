@@ -1250,6 +1250,8 @@ prop.grs.y <- matrix(data = NA, nrow = n, ncol = 51)
 perim_m.x <- matrix(data = NA, nrow = n, ncol = 51)
 perim_m.y <- matrix(data = NA, nrow = n, ncol = 51)
 
+training_list <- vector("list", n) 
+
 rf.res <- matrix(data = NA, nrow = n, ncol = nrow(training_set))
 
 y_hats <- matrix(data = NA, nrow = n, ncol = nrow(testing_set))
@@ -1288,8 +1290,9 @@ for(i in 1:n){
                      importance = TRUE,
                      keep.forest = TRUE,
                      keep.inbag = TRUE) ## making the rf object
-  y_hats[i,1:nrow(testing_set)] <- predict(object = rf, newdata = testing_set[, -1])
-  y_hats.diff[i] <- mean(as.numeric(y_hats[i,1:nrow(testing_set)]) - as.numeric(testing_set$stat))
+  y_hats[i,1:nrow(testing_set)] <- predict(object = rf, newdata = testing_set[, -1],type = "prob")[,2] ## predicted probability of holding
+  training_list[[i]] <- testing_set
+  y_hats.diff[i] <- mean(round(as.numeric(y_hats[i,1:nrow(testing_set)]),0) - (as.numeric(testing_set$stat)-1))
   varImp.summary[,i] <- rf$importance[,3]
   varImp.names[,i] <- rownames(rf$importance)
   rf.res[i,] <- as.integer(rf$predicted)
@@ -1386,9 +1389,9 @@ error.mean[500]*100
 text(x = 300, y = 0.3, paste("Average error = ", round(error.mean[500]*100, digits = 1),"%", sep = "")) 
 
 mean(AUC.val);min(AUC.val);max(AUC.val)
-# 0.8531146 0.8435496
-# 0.8356489 0.7550632
-# 0.8659724 0.9114035
+# 0.8693073 0.8435496
+# 0.8571117 0.7550632
+# 0.8829914 0.9114035
 
 ## VarImp Plot
 varImp.names[c(17:46),1]
@@ -1422,22 +1425,22 @@ FD$LineInt <- as.integer(FD$stat)-1
 FD$LineInt[FD$LineInt == 0] <- -0.25
 FD$LineInt[FD$LineInt == 1] <- 1.25
 
-VPd.y <- 1-(1/(1+exp(-VPd.y)))*2
-growth.y <- 1-(1/(1+exp(-growth.y)))*2
-elev.y <- 1-(1/(1+exp(-elev.y)))*2
-slope.y <- 1-(1/(1+exp(-slope.y)))*2
-tpi.y <- 1-(1/(1+exp(-tpi.y)))*2
-perim_m.y <- 1-(1/(1+exp(-perim_m.y)))*2
-prop.sf.y <- 1-(1/(1+exp(-prop.sf.y)))*2
-prop.pj.y <- 1-(1/(1+exp(-prop.pj.y)))*2
-prop.pico.y <- 1-(1/(1+exp(-prop.pico.y)))*2
-prop.pipo.y <- 1-(1/(1+exp(-prop.pipo.y)))*2
-prop.psme.y <- 1-(1/(1+exp(-prop.psme.y)))*2
-prop.oak.y <- 1-(1/(1+exp(-prop.oak.y)))*2
-prop.shr.y <- 1-(1/(1+exp(-prop.shr.y)))*2
-prop.oth.y <- 1-(1/(1+exp(-prop.oth.y)))*2
-prop.asp.y <- 1-(1/(1+exp(-prop.asp.y)))*2
-prop.grs.y <- 1-(1/(1+exp(-prop.grs.y)))*2
+# VPd.y <- 1-(1/(1+exp(-VPd.y)))*2
+# growth.y <- 1-(1/(1+exp(-growth.y)))*2
+# elev.y <- 1-(1/(1+exp(-elev.y)))*2
+# slope.y <- 1-(1/(1+exp(-slope.y)))*2
+# tpi.y <- 1-(1/(1+exp(-tpi.y)))*2
+# perim_m.y <- 1-(1/(1+exp(-perim_m.y)))*2
+# prop.sf.y <- 1-(1/(1+exp(-prop.sf.y)))*2
+# prop.pj.y <- 1-(1/(1+exp(-prop.pj.y)))*2
+# prop.pico.y <- 1-(1/(1+exp(-prop.pico.y)))*2
+# prop.pipo.y <- 1-(1/(1+exp(-prop.pipo.y)))*2
+# prop.psme.y <- 1-(1/(1+exp(-prop.psme.y)))*2
+# prop.oak.y <- 1-(1/(1+exp(-prop.oak.y)))*2
+# prop.shr.y <- 1-(1/(1+exp(-prop.shr.y)))*2
+# prop.oth.y <- 1-(1/(1+exp(-prop.oth.y)))*2
+# prop.asp.y <- 1-(1/(1+exp(-prop.asp.y)))*2
+# prop.grs.y <- 1-(1/(1+exp(-prop.grs.y)))*2
 gc()
 
 par(mfrow = c(4,4))
@@ -1830,7 +1833,23 @@ prop.oth.y.mean <- apply(prop.oth.y,2,mean)
 lo <- loess(prop.oth.y.mean~prop.oth.x.mean)
 lines(y = predict(lo), x = prop.oth.x.mean, col = "red", lwd = 2)
 
-rm(list = ls())
+par(mfrow = c(1,1))
+colnames(training_list[[1]])
+## growth
+plot(y_hats[1,] ~ as.numeric(training_list[[1]][,17]))
+abline(lm(y_hats[1,] ~ as.numeric(training_list[[1]][,17])))
+abline(h = 0.5, lty = 2)
+summary(lm(y_hats[1,] ~ as.numeric(training_list[[1]][,17])))
+plot(residuals(lm(y_hats[1,] ~ as.numeric(training_list[[1]][,17]))))
+
+plot(y_hats[1,] ~ as.numeric(training_list[[1]][,6]))
+abline(lm(y_hats[1,] ~ as.numeric(training_list[[1]][,6])))
+abline(h = 0.5, lty = 2)
+summary(lm(y_hats[1,] ~ as.numeric(training_list[[1]][,6])))
+plot(residuals(lm(y_hats[1,] ~ as.numeric(training_list[[1]][,6]))))
+
+
+# rm(list = ls())
 gc()
 
 #### Nonparametric Models ####
