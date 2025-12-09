@@ -1108,13 +1108,13 @@ rm(FDmod)
 ## once with all data, a second time with the removal of 4 largest fires (supplement)
 
 ## uncomment this code for supplemental analysis of fires minus 4 largest
-#
-#
+# 
+# 
 # vec <- c("cameronpeak","mullen","easttroublesome","hermitspeak") ## 4 largest fires
 # FireData <- FireData[!FireData$fire %in% vec,] ## subsetting out megafires
-#
-#
-#
+# 
+# 
+# 
 
 ## spatially thinning my data to keep 1 sample per 100 x 100 m cell
 dat <- FireData
@@ -1140,7 +1140,7 @@ correlogram <- ncf::correlog(x = dat$x, y = dat$y, z = dat$stat,
 plot(correlogram)
 dist_threshold <- as.numeric(correlogram$x.intercept) 
 ## 33067.81 for whole dataset if the correlogram fn isn't working. This is in m
-## 220238.2 for subset without large fires. Also in m
+## 218456.4 for subset without large fires. Also in m
 
 ## PCNM method for spatial autocorrelation
 dmat <- as.matrix(dist(cbind(dat$y, dat$x))) ## turning the coordinates of each plot into a distance matrix
@@ -1285,9 +1285,9 @@ doParallel::registerDoParallel(cl = local.cluster) ## parallel processing to run
 
 for(i in 1:n){
   set.seed(i)
-  EF_sample <- level1[sample(nrow(level1), 1000, replace = FALSE), ]
+  EF_sample <- level1[sample(nrow(level1), 1000, replace = TRUE), ]
   set.seed(i)
-  EH_sample <- level2[sample(nrow(level2), 1000, replace = FALSE), ]
+  EH_sample <- level2[sample(nrow(level2), 1000, replace = TRUE), ]
   dat_sub <- rbind(EF_sample, EH_sample)
   train_index <- createDataPartition(y = dat_sub_training$stat, p = 0.8, list = FALSE) ## prev. 0.75
   training_set <- as.data.frame(dat_sub[train_index,])
@@ -1382,12 +1382,14 @@ plot(x = 1:length(y_hats.diff), y = y_hats.diff,
      ylab = "% Difference in Predicted vs.Observed",
      cex = 1)
 abline(h = mean(y_hats.diff), col="firebrick4", lty = 2)
-text(x = 30, y = 10, paste("Average difference = ", round(mean(y_hats.diff), digits = 1),"%", sep = "")) 
+text(x = 30, y = 5, paste("Average difference = ", round(mean(y_hats.diff), digits = 1),"%", sep = "")) 
+## y = 10 for full set, y = 5 for subset
 
 mean(balance);min(balance);max(balance)
-# 0.5 - 0.9232063
-# 0.5 - 0.8952381
-# 0.5 - 0.9507937 far less balance on the no mega fire subset
+# 0.5 - 0.5
+# 0.5 - 0.5
+# 0.5 - 0.5 
+# balance should be 0.5 for all if code works properly
 
 error.mean <- apply(error,2,mean, na.rm = TRUE)
 min(error, na.rm = TRUE);max(error, na.rm = TRUE)
@@ -1401,11 +1403,12 @@ for(i in 1:100){
 lines(error.mean, type = "l", col = "firebrick", lty = 2, lwd= 2)
 error.mean[500]*100
 text(x = 300, y = 0.3, paste("Average error = ", round(error.mean[500]*100, digits = 1),"%", sep = "")) 
+## y = 0.3 for full, 0.2 for subset
 
 mean(AUC.val);min(AUC.val);max(AUC.val)
-# 0.866342 0.8435496
-# 0.8501945 0.7550632
-# 0.8845094 0.9114035
+# 0.866342 0.9965218
+# 0.8501945 0.9930508
+# 0.8845094 0.9980305
 
 ## VarImp Plot
 varImp.names[c(17:46),1]
