@@ -982,6 +982,7 @@ correlated <- correlated[correlated != 1]
 which(M == correlated, arr.ind = TRUE)
 ## wind is correlated with wind
 M[which(M < -0.75)]
+corrplot::corrplot(M)
 
 rm(preds);rm(M);rm(correlated)
 
@@ -1107,7 +1108,7 @@ rm(FDmod)
 ## models will need to be run twice to reproduce results
 ## once with all data, a second time with the removal of 4 largest fires (supplement)
 
-## uncomment this code for supplemental analysis of fires minus 4 largest
+# # uncomment this code for supplemental analysis of fires minus 4 largest
 # 
 # 
 # vec <- c("cameronpeak","mullen","easttroublesome","hermitspeak") ## 4 largest fires
@@ -1139,6 +1140,8 @@ correlogram <- ncf::correlog(x = dat$x, y = dat$y, z = dat$stat,
                             quiet = FALSE)
 plot(correlogram)
 dist_threshold <- as.numeric(correlogram$x.intercept) 
+# dist_threshold <- as.numeric(33067.81) 
+# dist_threshold <- as.numeric(218456.4)
 ## 33067.81 for whole dataset if the correlogram fn isn't working. This is in m
 ## 218456.4 for subset without large fires. Also in m
 
@@ -1188,7 +1191,6 @@ tuned_model <- tune.rfsrc(stat ~ ., data = training_set,
                           ntree.try = 500)
 # View optimal parameters
 print(tuned_model)
-
 
 1-length(which(training_set$stat == 0))/length(training_set$stat) ## unbalanced withouth megafires - most lines hold
 
@@ -1883,15 +1885,33 @@ for(i in 1:n){
 }
 
 hist(r.sq) ## looking at the distribution of r.sq
+mean(r.sq) ## 0.2399249 vs 0.1292318
 for(i in 1:ncol(p.val)){
   ifelse(length(which(p.val[,i] < 0.05))>5, print(colnames(p.val)[i]), NA)
 } ## if p values < 0.05 for more than 5 of 100 model runs, there is likely a difference in the distributions 
+# [1] "intercept" - both
+# [1] "perim_m" - both
+# [1] "elev" - both
+# [1] "slope" - both
+# [1] "tpi" - both
+# [1] "dougfir_prop" - both
+# [1] "gambel_prop" - both
+# [1] "grass_prop" -both
+# [1] "lodgepole_prop" - both
+# [1] "other_prop" - both
+# [1] "pj_prop" - both
+# [1] "pondo_prop" - both
+#                 - sf subset only
+# [1] "shrub_prop" - both
+# [1] "VPd" - no for subset
+# [1] "Growth" - both
 
 newdata_avg <- data.frame(matrix(ncol = 30, nrow = 100)) ## storing newdata for each of j:16 predictors
 preds_avg <- data.frame(matrix(ncol = 30, nrow = 100)) ## storing predictions as well
 
 par(mfrow = c(4,4)) ## reset the plotting to 4 x 4
 ## for loop to plot each of the data and lines for the partial effect of each predictor variable (j)
+
 for(j in 1:length(vec)){
   plot(y_hats[1,] ~ as.numeric(testing_list[[1]][,j+1]),
        ylab = "predicted line status",
