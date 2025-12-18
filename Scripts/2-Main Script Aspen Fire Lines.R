@@ -869,6 +869,36 @@ table(FireData$stat)
 length(unique(FireData$fire))
 table(is.na(FireData$stat))
 
+hist(FireData$perim_m,
+     las = 1,
+     breaks = 24,
+     xlab = "Line Length (m)",
+     main = "")
+
+max(FireData$Growth[FireData$stat == "EH"])
+max(FireData$Growth[FireData$stat == "EF"]) ## same value
+
+hist(FireData$Growth[FireData$stat == "EH"],
+     las = 1,
+     breaks = 24,
+     xlab = "Fire Growth",
+     main = "",
+     col = adjustcolor("darkgoldenrod",alpha.f = 0.8))
+hist(FireData$Growth[FireData$stat == "EF"],
+     las = 1,
+     breaks = 24,
+     xlab = "Fire Growth",
+     main = "",
+     col = adjustcolor("navy",alpha.f = 0.5),
+     add = T)
+legend("topright", legend = c("Held", "Failed"), pch = 15,
+       bty = "n", col = c("darkgoldenrod","navy"))
+
+table(FireData$fire[FireData$slope> 20])
+table(FireData$fire[FireData$slope> 20])/length(FireData$slope[FireData$slope > 20])*100
+
+
+
 groupedCounts <- as.data.frame(FireData %>% group_by(fire) %>% count(stat)) ## getting the count of failed/held lines by fire
 EF <- groupedCounts[groupedCounts$stat == "EF",] ## making a separate dataframe for EH/EF lines
 EH <- groupedCounts[groupedCounts$stat == "EH",]
@@ -1140,7 +1170,7 @@ correlogram <- ncf::correlog(x = dat$x, y = dat$y, z = dat$stat,
                             quiet = FALSE)
 plot(correlogram)
 dist_threshold <- as.numeric(correlogram$x.intercept) 
-# dist_threshold <- as.numeric(33067.81) 
+# dist_threshold <- as.numeric(33067.81)
 # dist_threshold <- as.numeric(218456.4)
 ## 33067.81 for whole dataset if the correlogram fn isn't working. This is in m
 ## 218456.4 for subset without large fires. Also in m
@@ -1291,6 +1321,7 @@ for(i in 1:n){
   set.seed(i)
   EH_sample <- level2[sample(nrow(level2), 1000, replace = TRUE), ]
   dat_sub <- rbind(EF_sample, EH_sample)
+  set.seed(i)
   train_index <- createDataPartition(y = dat_sub_training$stat, p = 0.8, list = FALSE) ## prev. 0.75
   training_set <- as.data.frame(dat_sub[train_index,])
   testing_set <- as.data.frame(dat_sub[-train_index,])
@@ -1306,6 +1337,7 @@ for(i in 1:n){
                      importance = TRUE,
                      keep.forest = TRUE,
                      keep.inbag = TRUE) ## making the rf object
+  set.seed(i)
   y_hats[i,1:nrow(testing_set)] <- predict(object = rf, newdata = testing_set[, -1],type = "prob")[,2] ## predicted probability of holding
   testing_list[[i]] <- testing_set
   y_hats.diff[i] <- mean(round(as.numeric(y_hats[i,1:nrow(testing_set)]),0) - (as.numeric(testing_set$stat)-1))
@@ -1379,13 +1411,13 @@ y_hats.diff <- y_hats.diff*100 ## converting to %
 plot(x = 1:length(y_hats.diff), y = y_hats.diff,
      pch = 16,
      xlab = "model run",
-     ylim = c(min(y_hats.diff)-10,max(y_hats.diff)+10),
+     ylim = c(min(y_hats.diff)-5,max(y_hats.diff)+5),
      las = 1,
      ylab = "% Difference in Predicted vs.Observed",
      cex = 1)
 abline(h = mean(y_hats.diff), col="firebrick4", lty = 2)
-text(x = 30, y = 5, paste("Average difference = ", round(mean(y_hats.diff), digits = 1),"%", sep = "")) 
-## y = 10 for full set, y = 5 for subset
+text(x = 30, y = 3, paste("Average difference = ", round(mean(y_hats.diff), digits = 1),"%", sep = "")) 
+## y = 8 for full set, y = 3 for subset
 
 mean(balance);min(balance);max(balance)
 # 0.5 - 0.5
@@ -1404,13 +1436,13 @@ for(i in 1:100){
 }
 lines(error.mean, type = "l", col = "firebrick", lty = 2, lwd= 2)
 error.mean[500]*100
-text(x = 300, y = 0.3, paste("Average error = ", round(error.mean[500]*100, digits = 1),"%", sep = "")) 
+text(x = 300, y = 0.2, paste("Average error = ", round(error.mean[500]*100, digits = 1),"%", sep = "")) 
 ## y = 0.3 for full, 0.2 for subset
 
 mean(AUC.val);min(AUC.val);max(AUC.val)
-# 0.866342 0.9965218
-# 0.8501945 0.9930508
-# 0.8845094 0.9980305
+# 0.9250267 0.9964093
+# 0.9109305 0.9935367
+# 0.9361117 0.9983453
 
 ## VarImp Plot
 varImp.names[c(17:46),1]
@@ -1885,26 +1917,37 @@ for(i in 1:n){
 }
 
 hist(r.sq) ## looking at the distribution of r.sq
-mean(r.sq) ## 0.2399249 vs 0.1292318
-for(i in 1:ncol(p.val)){
-  ifelse(length(which(p.val[,i] < 0.05))>5, print(colnames(p.val)[i]), NA)
-} ## if p values < 0.05 for more than 5 of 100 model runs, there is likely a difference in the distributions 
-# [1] "intercept" - both
-# [1] "perim_m" - both
-# [1] "elev" - both
-# [1] "slope" - both
-# [1] "tpi" - both
-# [1] "dougfir_prop" - both
-# [1] "gambel_prop" - both
-# [1] "grass_prop" -both
-# [1] "lodgepole_prop" - both
-# [1] "other_prop" - both
-# [1] "pj_prop" - both
-# [1] "pondo_prop" - both
-#                 - sf subset only
-# [1] "shrub_prop" - both
-# [1] "VPd" - no for subset
-# [1] "Growth" - both
+mean(r.sq) ## 0.2357751 vs 0.1459275
+
+for(i in 1:ncol(est)){
+  ifelse(length(which(est[,i] > 0))==100, print(paste(colnames(est)[i], "pos", sep = " ")),
+         ifelse(length(which(est[,i] < 0))==100,print(paste(colnames(est)[i], "neg", sep = " ")), print(paste(colnames(est)[i], "N.S", sep = " "))) 
+)
+} 
+# [1] "intercept N.S"
+# [2] "perim_m N.S."
+# [3] "elev N.S"
+# [4] "slope pos"
+# [5] "tpi N.S"
+# [6] "aspen_prop N.S"
+# [7] "dougfir_prop N.S"
+# [8] "gambel_prop N.S"
+# [9] "grass_prop N.S" - neg
+# [10] "lodgepole_prop N.S"
+# [11] "other_prop N.S"
+# [12] "pj_prop N.S"
+# [13] "pondo_prop N.S"
+# [14] "sf_prop N.S"
+# [15] "shrub_prop N.S"
+# [16] "VPd N.S"
+# [17] "Growth neg"
+
+mean(est[,4]) # slope
+#  0.007782768
+mean(est[,17]) # fire growth
+# -1.165993e-05
+mean(est[,9]) # grass
+# -0.4548057
 
 newdata_avg <- data.frame(matrix(ncol = 30, nrow = 100)) ## storing newdata for each of j:16 predictors
 preds_avg <- data.frame(matrix(ncol = 30, nrow = 100)) ## storing predictions as well
@@ -1930,6 +1973,30 @@ for(j in 1:length(vec)){
   abline(h = 0.5, lty = 2)
   lines(apply(newdata_avg,2,mean), apply(preds_avg,2,mean), col = "red")
 }
+par(mfrow = c(1,3))
+j <-8 # 3 for slope, 16 for growth, 5 for aspen
+plot(y_hats[1,] ~ as.numeric(testing_list[[1]][,j+1]),
+     ylab = "predicted line status",
+     las = 1,
+     xlab = colnames(testing_list[[1]])[j+1],
+     pch = 16,
+     col = adjustcolor("black",alpha.f = 0.01))
+for(i in 1:n){
+  points(y_hats[i,] ~ as.numeric(testing_list[[i]][,j+1]),
+         pch = 16,
+         col = adjustcolor("black",alpha.f = 0.01))
+  lines(newdata_list[[i]][[j]][,j], preds_list[[i]][[j]], lty=1, col = adjustcolor("black",alpha.f = 0.1))
+  newdata_avg[i,] <- newdata_list[[i]][[j]][,j]
+  preds_avg[i,] <- preds_list[[i]][[j]]
+}
+abline(h = 0.5, lty = 2)
+lines(apply(newdata_avg,2,mean), apply(preds_avg,2,mean), col = "red")
+
+apply(preds_avg,2,mean)
+apply(newdata_avg,2,mean)
+## above 12 degrees of slope held
+## growth above 3600 ha 
+## subset above 3% grass
 
 rm(list = ls()) ## cleaning global env
 gc()
